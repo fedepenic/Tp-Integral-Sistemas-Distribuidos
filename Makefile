@@ -10,12 +10,15 @@ generate-inputs:
 		money-laundering python scripts/generate_inputs.py
 
 run:
-	mkdir -p output
+	mkdir -p output/notebook
 	docker run --rm \
 		--env-file .env \
 		-v $(PWD)/input:/app/input \
 		-v $(PWD)/output:/app/output \
 		money-laundering python scripts/run_analysis.py
+
+compare:
+	python3 scripts/compare_outputs.py
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
