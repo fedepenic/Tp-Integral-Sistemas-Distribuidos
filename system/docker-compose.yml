@@ -1,0 +1,20 @@
+services:
+  client:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+
+  filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+
+  joiner:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+
+  counter:
+    build:
+      context: .
+      dockerfile: cmd/counter/Dockerfile
