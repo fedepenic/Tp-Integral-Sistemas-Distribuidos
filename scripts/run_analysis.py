@@ -1,11 +1,12 @@
 import os
 import subprocess
 
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 n_clients = int(os.environ.get('N_CLIENTS', 5))
 
 for i in range(1, n_clients + 1):
-    input_dir = f"input/client_{i}"
-    output_dir = f"output/client_{i}"
+    input_dir = os.path.join(base_dir, f"input/client_{i}")
+    output_dir = os.path.join(base_dir, f"output/client_{i}")
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Running analysis for client_{i}...")
