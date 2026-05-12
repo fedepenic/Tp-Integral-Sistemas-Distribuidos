@@ -1,8 +1,14 @@
 import pandas as pd
 import os
+import shutil
 
 n_samples = int(os.environ.get('N_SAMPLES', 500000))
 n_clients = int(os.environ.get('N_CLIENTS', 5))
+
+if os.path.exists("input"):
+    for entry in os.scandir("input"):
+        if entry.is_dir() and entry.name.startswith("client_"):
+            shutil.rmtree(entry.path)
 
 print("Loading source data...")
 trans_df = pd.read_csv("data/LI-Small_Trans.csv")

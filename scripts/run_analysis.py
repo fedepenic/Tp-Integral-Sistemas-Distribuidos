@@ -1,8 +1,15 @@
 import os
+import shutil
 import subprocess
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 n_clients = int(os.environ.get('N_CLIENTS', 5))
+
+output_root = os.path.join(base_dir, "output")
+if os.path.exists(output_root):
+    for entry in os.scandir(output_root):
+        if entry.is_dir() and entry.name.startswith("client_"):
+            shutil.rmtree(entry.path)
 
 for i in range(1, n_clients + 1):
     input_dir = os.path.join(base_dir, f"input/client_{i}")
