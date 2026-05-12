@@ -18,7 +18,9 @@ run:
 		money-laundering python scripts/run_analysis.py
 
 compare:
-	python3 scripts/compare_outputs.py
+	docker run --rm \
+		-v $(PWD)/output:/app/output \
+		money-laundering python scripts/compare_outputs.py
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
