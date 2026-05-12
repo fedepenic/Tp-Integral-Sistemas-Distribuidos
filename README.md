@@ -6,13 +6,15 @@ Repositorio correspondiente al trabajo práctico de la materia 75.74 Sistemas Di
 Place the dataset files inside the `data/` folder (not tracked by git), then:
 
 ```bash
-make build   # builds the Docker image
-make run     # runs the analysis and saves results to output/
-make all     # build + run in one step
-make down    # stops the running container
+make build                        # builds the Docker image
+make generate-inputs              # generates sampled input files for each client (default: 500000 samples, 5 clients)
+make generate-inputs N_SAMPLES=100000 N_CLIENTS=3  # override defaults
+make run                          # runs the analysis for all clients
+make all                          # build + generate-inputs + run in one step
+make down                         # stops the running container
 ```
 
-Results will be saved in the `output/` folder:
+Results will be saved in `output/client_N/` for each client:
 
 | File | Description |
 |---|---|
