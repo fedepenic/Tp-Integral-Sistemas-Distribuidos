@@ -6,4 +6,4 @@ RUN pip install --no-cache-dir numpy pandas jupyter nbconvert
 
 COPY . .
 
-CMD ["python", "run_analysis.py"]
+CMD ["python", "scripts/run_analysis.py"]

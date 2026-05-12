@@ -14,7 +14,7 @@ for i in range(1, n_clients + 1):
         [
             "jupyter", "nbconvert", "--to", "notebook", "--execute",
             "--ExecutePreprocessor.timeout=600",
-            "money-laundering-analysis.ipynb"
+            "scripts/money-laundering-analysis.ipynb"
         ],
         env=env,
         check=True
