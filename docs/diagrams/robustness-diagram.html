@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrama de Robustez — Money Laundering Analysis</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+    }
+
+    header {
+      background: #3b6fd4;
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    header h1 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+
+    .controls { display: flex; align-items: center; gap: 8px; }
+
+    .controls button {
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.4);
+      color: white;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.15s;
+    }
+    .controls button:hover { background: rgba(255,255,255,0.35); }
+
+    #zoom-label { color: white; font-size: 0.85rem; min-width: 46px; text-align: center; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      padding: 10px 24px;
+      background: white;
+      border-bottom: 1px solid #ddd;
+      align-items: center;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #444; }
+    .legend-dot  { width: 20px; height: 20px; border-radius: 50%; border: 1px solid #aaa; flex-shrink: 0; }
+    .legend-pill { width: 34px; height: 14px; border-radius: 8px; border: 1.5px solid #997a50; background: #d4b896; flex-shrink: 0; }
+    .legend-hex  { width: 26px; height: 18px; background: #fdba74; clip-path: polygon(15% 0%, 85% 0%, 100% 50%, 85% 100%, 15% 100%, 0% 50%); flex-shrink: 0; }
+    .legend-multi {
+      width: 20px; height: 20px; border-radius: 50%;
+      border: 1px solid #aaa; background: #e0e0e0; flex-shrink: 0;
+      box-shadow: 3px 3px 0 #bbb, 6px 6px 0 #d0d0d0;
+    }
+    .legend-sep { width: 1px; height: 24px; background: #ddd; }
+
+    #canvas-wrapper {
+      overflow: hidden;
+      width: 100%;
+      height: calc(100vh - 116px);
+      cursor: grab;
+      position: relative;
+    }
+    #canvas-wrapper:active { cursor: grabbing; }
+
+    #diagram-container {
+      display: inline-block;
+      padding: 32px;
+      transform-origin: top left;
+      user-select: none;
+    }
+    #diagram-container svg { display: block; max-width: none !important; }
+
+    /* nada aquí — el efecto de instancias múltiples se aplica via JS */
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Diagrama de Robustez — Money Laundering Analysis (75.74)</h1>
+  <div class="controls">
+    <button id="btn-fit">Ajustar</button>
+    <button id="btn-minus">−</button>
+    <span id="zoom-label">100%</span>
+    <button id="btn-plus">+</button>
+    <button id="btn-reset">Reset</button>
+  </div>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#fffacd"></div> Filter</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#add8e6"></div> Counter / Aggregator</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2d6a4f"></div> Sink (Resultado)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d8b4fe"></div> Joiner</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fca5a5"></div> Converter</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e5d5b0"></div> Gateway</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ffc0c0"></div> Watcher</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#dbeafe;border-color:#3b82f6"></div> External API</div>
+  <div class="legend-sep"></div>
+  <div class="legend-item"><div class="legend-pill"></div> Queue / Pipe</div>
+  <div class="legend-item"><div class="legend-hex"></div> Exchange (AMQP)</div>
+  <div class="legend-sep"></div>
+  <div class="legend-item"><div class="legend-multi"></div> Escalable (N instancias)</div>
+</div>
+
+<div id="canvas-wrapper">
+  <div id="diagram-container">
+    <div class="mermaid">
+flowchart LR
+    classDef filter      fill:#fffacd,stroke:#aaa,color:#333
+    classDef filterM     fill:#fffacd,stroke:#aaa,color:#333
+    classDef counter     fill:#add8e6,stroke:#aaa,color:#333
+    classDef counterM    fill:#add8e6,stroke:#aaa,color:#333
+    classDef sink        fill:#2d6a4f,stroke:#1a3c34,color:#fff,font-weight:bold
+    classDef joiner      fill:#d8b4fe,stroke:#aaa,color:#333
+    classDef joinerM     fill:#d8b4fe,stroke:#aaa,color:#333
+    classDef converter   fill:#fca5a5,stroke:#aaa,color:#333
+    classDef converterM  fill:#fca5a5,stroke:#aaa,color:#333
+    classDef gateway     fill:#e5d5b0,stroke:#aaa,color:#333
+    classDef gatewayM    fill:#e5d5b0,stroke:#aaa,color:#333
+    classDef watcher     fill:#ffc0c0,stroke:#aaa,color:#333
+    classDef queue       fill:#d4b896,stroke:#997a50,color:#333
+    classDef exchange    fill:#fdba74,stroke:#c2410c,color:#333
+    classDef file        fill:#fff,stroke:#666,color:#333
+    classDef extApi      fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef actorM      fill:#ECECFF,stroke:#9370DB,color:#333
+
+    %% UserIn / UserOut son el mismo cliente — separados visualmente
+    %% para distinguir el flujo de request del de response.
+    %% Multi-instancia: el sistema soporta varios clientes simultáneos.
+    UserIn(["User"]):::actorM
+    UserOut(["User"]):::actorM
+    TxnDS["Transactions File"]:::file
+    %% API externa: cotizaciones diarias fetcheadas vía HTTP
+    ERDS(["Frankfurter API"]):::extApi
+
+    subgraph SYS["Sistema: Money Laundering Analysis"]
+        direction LR
+
+        Gateway(["Gateway"]):::gateway
+        raw_q(["raw_transactions"]):::queue
+        Cleaner(["Cleaner"]):::gatewayM
+        txn_q{{"transactions_clean\n(fanout)"}}:::exchange
+
+        %% ─── Bound queues del exchange transactions_clean ────────────────
+        %% Solo 2 destinos: la rama USD compartida y Q5 (que opera
+        %% sobre todas las monedas, sin filtrado USD).
+        bind_for_usd(["txn_for_usd"]):::queue
+        bind_for_q5(["txn_for_q5"]):::queue
+
+        %% ─── USD Filter único: filtra USD una sola vez para 5 queries ───
+        USDFilt(["USD Filter"]):::filterM
+        usd_fanout{{"usd_filtered\n(fanout)"}}:::exchange
+
+        %% ─── Bound queues del exchange usd_filtered ───────────────────────
+        %% Una por cada consumer pipeline (4): Q1, Q2, Q3-P2 y la rama P1
+        %% (que es compartida por Q3-P1, Q4-FanOut y Q4-FanIn).
+        %% usd_for_q2 es un direct exchange (e2e binding) que rutea por
+        %% bank_id hash hacia las partition queues de MaxBank.
+        usd_for_q1(["usd_for_q1"]):::queue
+        usd_for_q2{{"usd_for_q2\n(direct)"}}:::exchange
+        usd_for_q3p2(["usd_for_q3p2"]):::queue
+        usd_for_p1(["usd_for_p1"]):::queue
+
+        %% ─── Q1: USD < 50 ──────────────────────────────────────────────
+        AmtFilt50(["Amount &lt; 50 Filter"]):::filterM
+        q1_q(["q1_data"]):::queue
+        SinkQ1(("Q1\nUSD &lt; 50")):::sink
+
+        %% ─── Q2: Max USD por banco ────────────────────────────────────
+        MaxBank(["Max Per Bank"]):::counterM
+        q2_q(["q2_data"]):::queue
+        SinkQ2(("Q2\nMax/Bank")):::sink
+
+        %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
+        P2Filt(["Period 2 Filter\n09-06 / 09-15"]):::filterM
+        p2_q(["usd_period2"]):::queue
+
+        %% ─── Period 1 Filter único compartido por Q3-P1, Q4-FO y Q4-FI ───
+        %% Filtra por fecha una sola vez y publica a 3 direct exchanges,
+        %% cada uno con su propia partition key (payment_format,
+        %% from_account, to_account).
+        P1Filt(["Period 1 Filter\n09-01 / 09-05"]):::filterM
+        usdp1_q3{{"usd_period1_for_q3\n(direct)"}}:::exchange
+        usdp1_q4o{{"usd_period1_for_q4_fo\n(direct)"}}:::exchange
+        usdp1_q4i{{"usd_period1_for_q4_fi\n(direct)"}}:::exchange
+
+        %% ─── Q3-P1: avg por payment_format en Period 1 ────────────────
+        AvgFmt(["Avg per Payment Format"]):::counterM
+        avg_q(["avg_per_format"]):::queue
+
+        JoinQ3(["Joiner format"]):::joinerM
+        q3c_q(["q3_candidates"]):::queue
+        SmallFilt(["Amount &lt; avg/100 Filter"]):::filterM
+        q3_q(["q3_data"]):::queue
+        SinkQ3(("Q3\nSmall Txn")):::sink
+
+        %% ─── Q4 — pipeline FanOut ─────────────────────────────────────
+        FanOut(["Fan-Out Detector\n5+ destinos"]):::counterM
+        fo_q(["fanout_accounts"]):::queue
+
+        %% ─── Q4 — pipeline FanIn ──────────────────────────────────────
+        %% Simétrico al FanOut: filtra C's con <5 orígenes distintos.
+        %% Es condición necesaria — sin ≥5 senders, |intersección| < 5
+        %% nunca se cumple, así que descartar acá no pierde true positives.
+        FanIn(["Fan-In Detector\n5+ orígenes"]):::counterM
+        fi_q(["fanin_accounts"]):::queue
+
+        SGJoin(["Scatter-Gather Joiner"]):::joinerM
+        sg_triples_q{{"sg_triples\n(direct)"}}:::exchange
+        %% ─── SG Aggregator: cierra el "gather" contando B's bridging ───
+        %% Agrupa triplas (A,B,C) por (A,C) y exige ≥5 intermediarias
+        %% distintas. Es el chequeo que el SGJoin no puede hacer por sí
+        %% mismo (cada instancia ve solo una B aislada).
+        SGAgg(["SG Aggregator\n5+ intermediarias"]):::counterM
+        q4_q(["q4_data"]):::queue
+        SinkQ4(("Q4\nScatter\nGather")):::sink
+
+        %% ─── Q5 — pipeline Wire/ACH (no necesita USD filter) ─────────
+        %% Pipeline lineal y largo (12 nodos): se pliega vertical (TB)
+        %% para no extender el diagrama horizontalmente.
+        subgraph Q5Pipe[" "]
+            direction TB
+            P1Filt_Q5(["Period 1 Filter\n09-01 / 09-05"]):::filterM
+            period1_q5(["period1_for_q5"]):::queue
+            WAFilt(["Wire/ACH Filter"]):::filterM
+            wa_q(["wireach_txn"]):::queue
+            Conv(["Currency Converter"]):::converterM
+            conv_q(["converted_usd"]):::queue
+            AmtFiltQ5(["USD &lt; 1 Filter"]):::filterM
+            q5f_q(["q5_filtered"]):::queue
+            %% Counter replicado: load-balanced sobre q5f_q. Cada instancia
+            %% lleva su conteo local y emite el parcial al cerrar el stream.
+            CntQ5(["Partial Counter"]):::counterM
+            q5_partial_q(["q5_partials"]):::queue
+            %% Sumador final: instancia única, agrega los conteos parciales
+            %% en el total global. Trabajo O(N_instancias), no O(N_txns).
+            Q5Sum(["Sum Reducer"]):::counter
+            q5_q(["q5_count"]):::queue
+            SinkQ5(("Q5\nCount")):::sink
+        end
+
+        report_q(["report"]):::queue
+
+        %% Mismo componente lógico que "Gateway" — separado solo
+        %% visualmente para evitar arrows que cruzan todo el diagrama.
+        GatewayOut(["Gateway"]):::gateway
+
+        %% Watcher como observer — sin flechas a workers específicos.
+        %% Su sola presencia dentro del boundary del sistema indica
+        %% que monitorea todo el procesamiento.
+        Watcher(["Watcher"]):::watcher
+    end
+
+    %% El cliente posee el archivo de transacciones y lo pasa al Terminal
+    TxnDS  --> UserIn
+    UserIn --> Gateway
+    %% El Currency Converter consulta la API vía HTTP y cachea localmente
+    ERDS --> Conv
+
+    Gateway --> raw_q --> Cleaner --> txn_q
+
+    %% ─── Bindings del exchange transactions_clean ────────────────
+    %% Solo 2: la rama USD (compartida) y la rama Q5 (sin USD).
+    txn_q --> bind_for_usd
+    txn_q --> bind_for_q5
+
+    %% ─── USD Filter único + fanout usd_filtered ──────────────────
+    %% Filtra USD una vez y replica a las 6 queries que lo necesitan.
+    bind_for_usd --> USDFilt --> usd_fanout
+
+    %% ─── Bindings del exchange usd_filtered ──────────────────────
+    %% 4 destinos: Q1, Q2, Q3-P2 y la rama P1 (compartida por Q3, Q4)
+    usd_fanout --> usd_for_q1
+    usd_fanout --> usd_for_q2
+    usd_fanout --> usd_for_q3p2
+    usd_fanout --> usd_for_p1
+
+    %% ─── Q1: USD < 50 ─────────────────────────────────────────────
+    usd_for_q1 --> AmtFilt50 --> q1_q --> SinkQ1
+
+    %% ─── Q2: Max USD por banco ────────────────────────────────────
+    %% USDFilt publica con routing_key = hash(bank_id) % N.
+    %% El direct exchange usd_for_q2 rutea a la partition queue
+    %% correcta de MaxBank. Sin plugins, sin Router worker.
+    usd_for_q2 -->|key: bank_id| MaxBank
+    MaxBank --> q2_q --> SinkQ2
+
+    %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
+    usd_for_q3p2 --> P2Filt --> p2_q
+    p2_q -->|key: payment_format| JoinQ3
+
+    %% ─── Period 1 Filter único: 1 input, 3 outputs ────────────────
+    %% Filtra por fecha una vez y publica 3 veces a 3 direct exchanges,
+    %% cada uno con su propia partition key.
+    usd_for_p1 --> P1Filt
+    P1Filt --> usdp1_q3
+    P1Filt --> usdp1_q4o
+    P1Filt --> usdp1_q4i
+
+    %% ─── Q3-P1: AvgFmt particionado por payment_format ───────────
+    usdp1_q3 -->|key: payment_format| AvgFmt
+    AvgFmt --> avg_q
+    avg_q -->|key: payment_format| JoinQ3
+    JoinQ3 --> q3c_q --> SmallFilt --> q3_q --> SinkQ3
+
+    %% ─── Q4: scatter-gather (FanOut + FanIn) ──────────────────────
+    %% FanOut/FanIn stateful → partición por cuenta origen/destino.
+    %% Ambos aplican threshold ≥5 (scatter y gather simétricos).
+    %% SGJoin une por cuenta intermedia (la "B" del patrón A→B→C).
+    %% SGAgg cierra el patrón contando B's distintas por (A,C).
+    usdp1_q4o -->|key: from_account| FanOut
+    FanOut --> fo_q
+    fo_q -->|key: middle_account| SGJoin
+
+    usdp1_q4i -->|key: to_account| FanIn
+    FanIn --> fi_q
+    fi_q -->|key: middle_account| SGJoin
+
+    %% SGJoin emite triplas (A,B,C) ruteadas por (A,C) hacia el agregador,
+    %% que cuenta B's distintas por par y filtra los ≥5.
+    SGJoin --> sg_triples_q
+    sg_triples_q -->|key: A,C| SGAgg
+    SGAgg --> q4_q --> SinkQ4
+
+    %% ─── Q5: Wire/ACH en Period 1 con USD < 1 ────────────────────
+    %% Q5 NO usa el USD filter — opera sobre todas las monedas y
+    %% convierte después con el Currency Converter.
+    bind_for_q5 --> P1Filt_Q5 --> period1_q5 --> WAFilt --> wa_q --> Conv
+    Conv --> conv_q --> AmtFiltQ5 --> q5f_q --> CntQ5
+    %% Counters parciales → reducer único que suma todos los conteos.
+    CntQ5 --> q5_partial_q --> Q5Sum --> q5_q --> SinkQ5
+
+    SinkQ1 --> report_q
+    SinkQ2 --> report_q
+    SinkQ3 --> report_q
+    SinkQ4 --> report_q
+    SinkQ5 --> report_q
+    report_q --> GatewayOut
+    GatewayOut -.-> UserOut
+
+    %% Q3 y Q4 tienen ahora el mismo largo después del join
+    %% (5 nodos: Joiner → queue → worker → queue → sink), así que el
+    %% layout se alinea naturalmente sin anchors invisibles.
+
+    %% Subgraphs invisibles (solo agrupan para layout interno TB)
+    style Q5Pipe fill:none,stroke:none
+    </div>
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    fontSize: 22,
+    flowchart: {
+      useMaxWidth: false,
+      curve: 'bumpX',
+      nodeSpacing: 80,
+      rankSpacing: 120,
+      padding: 28
+    }
+  });
+
+  const wrapper   = document.getElementById('canvas-wrapper');
+  const container = document.getElementById('diagram-container');
+  const zoomLabel = document.getElementById('zoom-label');
+
+  let scale = 1, panX = 0, panY = 0;
+  let isDragging = false, startX, startY;
+
+  function applyTransform() {
+    container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    zoomLabel.textContent = Math.round(scale * 100) + '%';
+  }
+
+  function fitDiagram() {
+    const svg = container.querySelector('svg');
+    if (!svg) return;
+    const svgW = svg.getBoundingClientRect().width / scale;
+    const svgH = svg.getBoundingClientRect().height / scale;
+    scale = Math.min((wrapper.clientWidth - 64) / svgW, (wrapper.clientHeight - 64) / svgH, 1);
+    panX = (wrapper.clientWidth  - svgW * scale) / 2;
+    panY = (wrapper.clientHeight - svgH * scale) / 2;
+    applyTransform();
+  }
+
+  // Reemplaza el rect de los nodos .file con una forma de archivo
+  // (rectángulo con esquina superior derecha doblada).
+  function makeFileShapes() {
+    const FILL      = '#ffffff';
+    const FOLD_FILL = '#e5e5e5';
+    const STROKE    = '#666';
+    const ns = 'http://www.w3.org/2000/svg';
+
+    document.querySelectorAll('.node.file').forEach(node => {
+      const rect = node.querySelector('rect');
+      if (!rect) return;
+
+      const W = parseFloat(rect.getAttribute('width'));
+      const H = parseFloat(rect.getAttribute('height'));
+      const x = parseFloat(rect.getAttribute('x') ?? -W / 2);
+      const y = parseFloat(rect.getAttribute('y') ?? -H / 2);
+
+      // Padding extra para que el texto no choque con la esquina doblada
+      const PAD = 18;
+      const W2  = W + PAD * 2;
+      const x2  = x - PAD;
+
+      const dogEar = Math.min(H * 0.32, 22);
+
+      rect.remove();
+
+      const make = (tag, attrs) => {
+        const el = document.createElementNS(ns, tag);
+        Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, String(v)));
+        return el;
+      };
+
+      const label = node.querySelector('.label');
+      const ins   = el => label ? node.insertBefore(el, label) : node.appendChild(el);
+
+      // Cuerpo principal: rectángulo con esquina doblada
+      const bodyPts = [
+        `${x2},${y}`,
+        `${x2 + W2 - dogEar},${y}`,
+        `${x2 + W2},${y + dogEar}`,
+        `${x2 + W2},${y + H}`,
+        `${x2},${y + H}`
+      ].join(' ');
+      ins(make('polygon', {
+        points: bodyPts,
+        fill: FILL, stroke: STROKE, 'stroke-width': 1.5,
+        'stroke-linejoin': 'round'
+      }));
+
+      // Triángulo del doblez
+      const foldPts = [
+        `${x2 + W2 - dogEar},${y}`,
+        `${x2 + W2 - dogEar},${y + dogEar}`,
+        `${x2 + W2},${y + dogEar}`
+      ].join(' ');
+      ins(make('polygon', {
+        points: foldPts,
+        fill: FOLD_FILL, stroke: STROKE, 'stroke-width': 1.5,
+        'stroke-linejoin': 'round'
+      }));
+    });
+  }
+
+  // Reemplaza las shapes de los nodos queue con cilindros horizontales SVG
+  function makeHorizontalCylinders() {
+    const FILL      = '#d4b896';
+    const FILL_DARK = '#b89a7a';
+    const STROKE    = '#997a50';
+    const ns = 'http://www.w3.org/2000/svg';
+
+    document.querySelectorAll('.node.queue').forEach(node => {
+      const rect = node.querySelector('rect');
+      if (!rect) return;
+
+      const W  = parseFloat(rect.getAttribute('width'));
+      const H  = parseFloat(rect.getAttribute('height'));
+      const x  = parseFloat(rect.getAttribute('x') ?? -W / 2);
+      const y  = parseFloat(rect.getAttribute('y') ?? -H / 2);
+
+      // Ampliar el ancho del cilindro para que las tapas no tapen el texto
+      const PAD = 44;
+      const W2  = W + PAD * 2;
+      const x2  = x - PAD;
+
+      const capRx = Math.min(H * 0.44, W2 * 0.18);
+      const capRy = H / 2;
+      const cx1   = x2 + capRx;
+      const cx2   = x2 + W2 - capRx;
+      const cy    = y + capRy;
+
+      rect.remove();
+
+      const make = (tag, attrs) => {
+        const el = document.createElementNS(ns, tag);
+        Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, String(v)));
+        return el;
+      };
+
+      const label = node.querySelector('.label');
+      const ins   = el => label ? node.insertBefore(el, label) : node.appendChild(el);
+
+      ins(make('ellipse', { cx: cx1, cy, rx: capRx, ry: capRy,           fill: FILL_DARK, stroke: STROKE, 'stroke-width': 1.5 }));
+      ins(make('rect',    { x: cx1,  y,  width: cx2 - cx1, height: H,    fill: FILL,      stroke: 'none' }));
+      ins(make('line',    { x1: cx1, y1: y,   x2: cx2, y2: y,            stroke: STROKE,  'stroke-width': 1.5 }));
+      ins(make('line',    { x1: cx1, y1: y+H, x2: cx2, y2: y+H,          stroke: STROKE,  'stroke-width': 1.5 }));
+      ins(make('ellipse', { cx: cx2, cy, rx: capRx, ry: capRy,            fill: FILL,      stroke: STROKE, 'stroke-width': 1.5 }));
+    });
+  }
+
+  // Clona solo la forma de fondo (rect/path) y la desplaza hacia atrás,
+  // sin tocar el texto — efecto de "capas apiladas" para nodos escalables.
+  function applyMultiShadow() {
+    const multiClasses = ['filterM','counterM','joinerM','converterM','gatewayM','actorM'];
+    multiClasses.forEach(cls => {
+      document.querySelectorAll(`.node.${cls}`).forEach(node => {
+        const bgShape = node.querySelector('rect, circle, ellipse, polygon, path');
+        if (!bgShape) return;
+        const parent = bgShape.parentNode;
+
+        [
+          { dx: 10, dy: 10, fill: '#888', opacity: 0.65 },
+          { dx: 5,  dy: 5,  fill: '#999', opacity: 0.80 },
+        ].forEach(({ dx, dy, fill, opacity }) => {
+          const clone = bgShape.cloneNode(false);   // solo la forma, sin hijos
+          clone.setAttribute('fill', fill);
+          clone.setAttribute('stroke', '#888');
+          clone.setAttribute('opacity', String(opacity));
+          clone.removeAttribute('style');
+          const existing = clone.getAttribute('transform') || '';
+          clone.setAttribute('transform', `translate(${dx},${dy})${existing ? ' ' + existing : ''}`);
+          parent.insertBefore(clone, bgShape);      // inserta detrás del shape original
+        });
+      });
+    });
+  }
+
+  // Recorta el endpoint de TODAS las flechas para dejar un espacio
+  // entre la punta y el nodo destino. Reconstruye el path como polilínea
+  // hasta (totalLen - TRIM), válido para cualquier tipo de curva.
+  function trimAllArrows() {
+    const TRIM = 14;
+    const svg = document.querySelector('#diagram-container svg');
+    if (!svg) return;
+
+    svg.querySelectorAll('path.flowchart-link').forEach(pathEl => {
+      try {
+        const totalLen = pathEl.getTotalLength();
+        if (totalLen <= TRIM + 5) return;
+
+        const newLen = totalLen - TRIM;
+        const numSeg = Math.max(24, Math.floor(newLen / 4));
+        let newD = '';
+        for (let i = 0; i <= numSeg; i++) {
+          const t  = (i / numSeg) * newLen;
+          const pt = pathEl.getPointAtLength(t);
+          newD += (i === 0 ? 'M ' : ' L ') + pt.x.toFixed(2) + ' ' + pt.y.toFixed(2);
+        }
+        pathEl.setAttribute('d', newD);
+      } catch(_) {}
+    });
+  }
+
+  document.getElementById('btn-plus').addEventListener('click',  () => { scale = Math.min(scale + 0.15, 4);   applyTransform(); });
+  document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.15, 0.1); applyTransform(); });
+  document.getElementById('btn-reset').addEventListener('click', () => { scale = 1; panX = 0; panY = 0; applyTransform(); });
+  document.getElementById('btn-fit').addEventListener('click',   fitDiagram);
+
+  wrapper.addEventListener('wheel', e => {
+    e.preventDefault();
+    scale = Math.min(Math.max(scale + (e.deltaY > 0 ? -0.1 : 0.1), 0.1), 4);
+    applyTransform();
+  }, { passive: false });
+
+  wrapper.addEventListener('mousedown', e => { isDragging = true; startX = e.clientX - panX; startY = e.clientY - panY; });
+  window.addEventListener('mousemove', e => { if (!isDragging) return; panX = e.clientX - startX; panY = e.clientY - startY; applyTransform(); });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => { makeFileShapes(); makeHorizontalCylinders(); applyMultiShadow(); trimAllArrows(); fitDiagram(); }, 800);
+  });
+</script>
+</body>
+</html>
