@@ -1,20 +1,49 @@
 # Tp-Integral-Sistemas-Distribuidos
 Repositorio correspondiente al trabajo práctico de la materia 75.74 Sistemas Distribuidos I
 
-## Running the analysis
+## Make commands
 
-Place the dataset files inside the `data/` folder (not tracked by git), then:
+Place the dataset files inside the `data/` folder (not tracked by git), then use the commands below.
+
+### One-step pipelines
+
+| Command | Description |
+|---|---|
+| `make all-notebook` | Full notebook pipeline: build → generate inputs → run notebook analysis |
+| `make all-system` | Full system pipeline: build → generate compose → generate inputs → start distributed system |
+
+### Comparison
+
+| Command | Description |
+|---|---|
+| `make compare` | Compares notebook and system outputs to validate correctness |
+
+### Individual steps
+
+| Command | Description |
+|---|---|
+| `make build` | Builds the Docker image |
+| `make generate-compose` | Generates `system/docker-compose.yml` from `.env` configuration |
+| `make generate-inputs` | Generates sampled input files for each client (default: 500000 samples, 5 clients) |
+| `make run-notebook` | Runs the Jupyter notebook analysis for all clients |
+| `make run-system` | Starts the distributed system (client + all nodes) via docker compose |
+
+You can override defaults when generating inputs:
 
 ```bash
-make build                        # builds the Docker image
-make generate-inputs              # generates sampled input files for each client (default: 500000 samples, 5 clients)
-make generate-inputs N_SAMPLES=100000 N_CLIENTS=3  # override defaults
-make run                          # runs the analysis for all clients
-make all                          # build + generate-inputs + run in one step
-make down                         # stops the running container
+make generate-inputs N_SAMPLES=100000 N_CLIENTS=3
 ```
 
-Results will be saved in `output/client_N/` for each client:
+### Teardown
+
+| Command | Description |
+|---|---|
+| `make stop-system` | Stops and removes the distributed system containers |
+| `make down` | Stops any running notebook analysis containers |
+
+### Output
+
+Results will be saved in `output/notebook/client_N/` and `output/system/client_N/` for each client:
 
 | File | Description |
 |---|---|
