@@ -1,20 +1,57 @@
 services:
-  client:
+  client_1:
     build:
       context: .
       dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
 
-  filter:
+  filter_1:
     build:
       context: .
       dockerfile: cmd/filter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
 
-  joiner:
+  joiner_1:
     build:
       context: .
       dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=3
 
-  counter:
+  joiner_2:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=3
+
+  joiner_3:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=3
+      - INSTANCE_TOTAL=3
+
+  counter_1:
     build:
       context: .
       dockerfile: cmd/counter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+
+  counter_2:
+    build:
+      context: .
+      dockerfile: cmd/counter/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+

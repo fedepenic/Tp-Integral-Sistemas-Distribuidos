@@ -1,3 +1,9 @@
+generate-compose:
+	docker run --rm \
+		--env-file .env \
+		-v $(PWD)/system:/app/system \
+		money-laundering python scripts/generate_compose.py
+
 build:
 	docker build -t money-laundering .
 
