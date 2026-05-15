@@ -33,10 +33,10 @@ run-notebook:
 		money-laundering python scripts/run_analysis.py
 
 run-system:
-	docker compose -f system/docker-compose.yml up --build
+	docker-compose -f system/docker-compose.yml up --build
 
 stop-system:
-	docker compose -f system/docker-compose.yml down
+	docker-compose -f system/docker-compose.yml down
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
