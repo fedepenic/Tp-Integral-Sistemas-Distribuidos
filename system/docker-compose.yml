@@ -12,10 +12,26 @@ services:
       dockerfile: cmd/client/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=2
       - GATEWAY_HOST=gateway
       - GATEWAY_PORT=8080
       - INPUT_DIR=/data/client_1
+      - BATCH_SIZE=100
+    volumes:
+      - ../input:/data
+    depends_on:
+      - gateway
+
+  client_2:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      - INPUT_DIR=/data/client_2
       - BATCH_SIZE=100
     volumes:
       - ../input:/data

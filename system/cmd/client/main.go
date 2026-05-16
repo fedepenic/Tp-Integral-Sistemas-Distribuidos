@@ -17,21 +17,22 @@ func main() {
 	gatewayHost := envOrDefault("GATEWAY_HOST", "gateway")
 	gatewayPort := envOrDefault("GATEWAY_PORT", "8080")
 	inputDir := envOrDefault("INPUT_DIR", "/data")
+	clientID := envOrDefault("INSTANCE_ID", "unknown")
 	batchSize := envIntOrDefault("BATCH_SIZE", 100)
 
 	addr := fmt.Sprintf("%s:%s", gatewayHost, gatewayPort)
 	conn := dialWithRetry(addr, 10, 2*time.Second)
 	defer conn.Close()
 
-	if err := sendAccounts(conn, inputDir+"/LI-Small_accounts.csv", batchSize); err != nil {
+	if err := sendAccounts(conn, inputDir+"/LI-Small_accounts.csv", batchSize, clientID); err != nil {
 		log.Fatalf("sending accounts: %v", err)
 	}
 
-	if err := sendTransactions(conn, inputDir+"/LI-Small_Trans.csv", batchSize); err != nil {
+	if err := sendTransactions(conn, inputDir+"/LI-Small_Trans.csv", batchSize, clientID); err != nil {
 		log.Fatalf("sending transactions: %v", err)
 	}
 
-	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF}); err != nil {
+	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID}); err != nil {
 		log.Fatalf("sending EOF: %v", err)
 	}
 
@@ -57,7 +58,7 @@ func dialWithRetry(addr string, maxRetries int, delay time.Duration) net.Conn {
 	return nil
 }
 
-func sendAccounts(conn net.Conn, path string, batchSize int) error {
+func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -91,7 +92,7 @@ func sendAccounts(conn net.Conn, path string, batchSize int) error {
 			EntityName:    row[4],
 		})
 		if len(buf) >= batchSize {
-			if err := flushAccounts(conn, buf); err != nil {
+			if err := flushAccounts(conn, buf, clientID); err != nil {
 				return err
 			}
 			total += len(buf)
@@ -99,7 +100,7 @@ func sendAccounts(conn net.Conn, path string, batchSize int) error {
 		}
 	}
 	if len(buf) > 0 {
-		if err := flushAccounts(conn, buf); err != nil {
+		if err := flushAccounts(conn, buf, clientID); err != nil {
 			return err
 		}
 		total += len(buf)
@@ -108,11 +109,11 @@ func sendAccounts(conn net.Conn, path string, batchSize int) error {
 	return nil
 }
 
-func flushAccounts(conn net.Conn, accounts []protocol.Account) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeAccounts, Accounts: accounts})
+func flushAccounts(conn net.Conn, accounts []protocol.Account, clientID string) error {
+	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeAccounts, ClientID: clientID, Accounts: accounts})
 }
 
-func sendTransactions(conn net.Conn, path string, batchSize int) error {
+func sendTransactions(conn net.Conn, path string, batchSize int, clientID string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -156,7 +157,7 @@ func sendTransactions(conn net.Conn, path string, batchSize int) error {
 			IsLaundering:      isLaundering,
 		})
 		if len(buf) >= batchSize {
-			if err := flushTransactions(conn, buf); err != nil {
+			if err := flushTransactions(conn, buf, clientID); err != nil {
 				return err
 			}
 			total += len(buf)
@@ -164,7 +165,7 @@ func sendTransactions(conn net.Conn, path string, batchSize int) error {
 		}
 	}
 	if len(buf) > 0 {
-		if err := flushTransactions(conn, buf); err != nil {
+		if err := flushTransactions(conn, buf, clientID); err != nil {
 			return err
 		}
 		total += len(buf)
@@ -173,8 +174,8 @@ func sendTransactions(conn net.Conn, path string, batchSize int) error {
 	return nil
 }
 
-func flushTransactions(conn net.Conn, txns []protocol.Transaction) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeTransactions, Transactions: txns})
+func flushTransactions(conn net.Conn, txns []protocol.Transaction, clientID string) error {
+	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns})
 }
 
 func envOrDefault(key, def string) string {

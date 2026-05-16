@@ -29,13 +29,14 @@ func main() {
 			continue
 		}
 		log.Printf("client connected: %s", conn.RemoteAddr())
-		handleClient(conn)
+		go handleClient(conn)
 	}
 }
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 
+	clientID := "unknown"
 	totalAccounts := 0
 	totalTransactions := 0
 
@@ -43,26 +44,30 @@ func handleClient(conn net.Conn) {
 		batch, err := protocol.Receive(conn)
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("client %s disconnected", conn.RemoteAddr())
+				log.Printf("client %s disconnected unexpectedly", clientID)
 			} else {
-				log.Printf("receive error from %s: %v", conn.RemoteAddr(), err)
+				log.Printf("client %s receive error: %v", clientID, err)
 			}
 			return
+		}
+
+		if batch.ClientID != "" {
+			clientID = batch.ClientID
 		}
 
 		switch batch.Type {
 		case protocol.BatchTypeAccounts:
 			totalAccounts += len(batch.Accounts)
-			log.Printf("[accounts] batch of %d received (running total: %d)", len(batch.Accounts), totalAccounts)
+			log.Printf("[client %s] accounts batch of %d (total: %d)", clientID, len(batch.Accounts), totalAccounts)
 
 		case protocol.BatchTypeTransactions:
 			totalTransactions += len(batch.Transactions)
-			log.Printf("[transactions] batch of %d received (running total: %d)", len(batch.Transactions), totalTransactions)
+			log.Printf("[client %s] transactions batch of %d (total: %d)", clientID, len(batch.Transactions), totalTransactions)
 
 		case protocol.BatchTypeEOF:
-			log.Printf("[eof] stream complete — accounts=%d transactions=%d", totalAccounts, totalTransactions)
+			log.Printf("[client %s] finished — accounts=%d transactions=%d", clientID, totalAccounts, totalTransactions)
 			if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeACK}); err != nil {
-				log.Printf("send ack: %v", err)
+				log.Printf("client %s send ack: %v", clientID, err)
 			}
 			return
 		}
