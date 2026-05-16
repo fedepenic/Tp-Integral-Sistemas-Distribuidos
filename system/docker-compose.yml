@@ -105,3 +105,20 @@ services:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
 
+  filter_usd:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+    environment:
+      - FILTER_FIELD=payment_currency
+      - FILTER_OP=eq
+      - FILTER_VALUE=US Dollar
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_QUEUE=txn_for_usd
+      - OUTPUT_QUEUE=usd_filtered
+      - EOF_INPUT_EXCHANGE=eof_cleaner
+      - EOF_INPUT_KEY=filter_usd
+      - EOF_OUTPUT_EXCHANGE=eof_usd_filter
+      - EOF_OUTPUT_KEY=done
+      - UPSTREAM_INSTANCES=1
