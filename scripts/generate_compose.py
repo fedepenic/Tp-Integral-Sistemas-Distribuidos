@@ -23,6 +23,24 @@ ENV_VAR = {
 def build_compose(env: dict[str, str]) -> str:
     lines = ["services:"]
 
+    # RabbitMQ — single instance, must be healthy before gateway starts
+    lines.append(f"  rabbitmq:")
+    lines.append(f"    build:")
+    lines.append(f"      context: .")
+    lines.append(f"      dockerfile: cmd/rabbitmq/Dockerfile")
+    lines.append(f"    environment:")
+    lines.append(f"      - RABBITMQ_LOG_LEVELS=error")
+    lines.append(f"    ports:")
+    lines.append(f"      - 5672:5672")
+    lines.append(f"      - 15672:15672")
+    lines.append(f"    healthcheck:")
+    lines.append(f"      test: rabbitmq-diagnostics check_port_connectivity")
+    lines.append(f"      interval: 5s")
+    lines.append(f"      timeout: 3s")
+    lines.append(f"      retries: 10")
+    lines.append(f"      start_period: 50s")
+    lines.append("")
+
     # Gateway — single instance, no scaling
     lines.append(f"  gateway:")
     lines.append(f"    build:")
@@ -30,6 +48,9 @@ def build_compose(env: dict[str, str]) -> str:
     lines.append(f"      dockerfile: cmd/gateway/Dockerfile")
     lines.append(f"    environment:")
     lines.append(f"      - GATEWAY_PORT={GATEWAY_PORT}")
+    lines.append(f"    depends_on:")
+    lines.append(f"      rabbitmq:")
+    lines.append(f"        condition: service_healthy")
     lines.append("")
 
     # Clients
