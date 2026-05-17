@@ -8,16 +8,16 @@ COMPOSE_OUT = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 GATEWAY_PORT = 8080
 
 SERVICES = [
-    ("filter",  "cmd/filter/Dockerfile"),
-    ("joiner",  "cmd/joiner/Dockerfile"),
-    ("counter", "cmd/counter/Dockerfile"),
+    ("filter",             "cmd/filter/Dockerfile",             "N_FILTERS",             {}),
+    ("joiner",             "cmd/joiner/Dockerfile",             "N_JOINERS",             {}),
+    ("counter",            "cmd/counter/Dockerfile",            "N_COUNTERS",            {}),
+    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
+        "INPUT_QUEUE":  "wireach_txn",
+        "OUTPUT_QUEUE": "converted_usd",
+        "RABBITMQ_HOST": "rabbitmq",
+        "RABBITMQ_PORT": "5672",
+    }),
 ]
-
-ENV_VAR = {
-    "filter":  "N_FILTERS",
-    "joiner":  "N_JOINERS",
-    "counter": "N_COUNTERS",
-}
 
 
 def build_compose(env: dict[str, str]) -> str:
@@ -74,9 +74,8 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - gateway")
         lines.append("")
 
-    # Rest of services
-    for name, dockerfile in SERVICES:
-        count = int(env.get(ENV_VAR[name], 1))
+    for name, dockerfile, env_var, extra_env in SERVICES:
+        count = int(env.get(env_var, 1))
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -85,6 +84,8 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
+            for k, v in extra_env.items():
+                lines.append(f"      - {k}={v}")
             lines.append("")
 
     return "\n".join(lines) + "\n"
