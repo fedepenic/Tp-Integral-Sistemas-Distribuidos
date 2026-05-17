@@ -105,3 +105,15 @@ services:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
 
+  currency_converter_1:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+
