@@ -86,6 +86,9 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - INSTANCE_TOTAL={count}")
             for k, v in extra_env.items():
                 lines.append(f"      - {k}={v}")
+            lines.append(f"    depends_on:")
+            lines.append(f"      rabbitmq:")
+            lines.append(f"        condition: service_healthy")
             lines.append("")
 
     return "\n".join(lines) + "\n"
