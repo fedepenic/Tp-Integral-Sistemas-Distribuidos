@@ -33,9 +33,6 @@ func (FanOutLogic) Accumulate(state FanOutState, tx protocol.Transaction) FanOut
 }
 
 func (FanOutLogic) Finalize(key AccountRef, state FanOutState) []FanOutResult {
-	if len(state.Distinct) <= scatterThreshold {
-		return nil
-	}
 	results := make([]FanOutResult, 0, len(state.Distinct))
 	for _, ref := range state.Distinct {
 		results = append(results, FanOutResult{

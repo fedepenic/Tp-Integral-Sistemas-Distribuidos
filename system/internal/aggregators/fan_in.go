@@ -33,9 +33,6 @@ func (FanInLogic) Accumulate(state FanInState, tx protocol.Transaction) FanInSta
 }
 
 func (FanInLogic) Finalize(key AccountRef, state FanInState) []FanInResult {
-	if len(state.Distinct) <= scatterThreshold {
-		return nil
-	}
 	results := make([]FanInResult, 0, len(state.Distinct))
 	for _, ref := range state.Distinct {
 		results = append(results, FanInResult{
