@@ -34,8 +34,9 @@ var currencyNameToCode = map[string]string{
 }
 
 // staticRates is a fallback for currencies not supported by the Frankfurter API (e.g. Bitcoin).
+// Bitcoin rate as of 2026-05-20: 1 BTC = 77687.42 USD.
 var staticRates = map[string]float64{
-	"Bitcoin": 78.33,
+	"Bitcoin": 77687.42,
 }
 
 type frankfurterRate struct {
