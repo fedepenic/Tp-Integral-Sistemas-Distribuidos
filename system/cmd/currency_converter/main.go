@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,19 +45,32 @@ type frankfurterRate struct {
 	Rate float64 `json:"rate"`
 }
 
+type rateKey struct {
+	code string
+	date string
+}
+
 type converter struct {
-	cache      map[string]float64
+	cache      map[rateKey]float64
 	httpClient *http.Client
 }
 
 func newConverter() *converter {
 	return &converter{
-		cache:      make(map[string]float64),
+		cache:      make(map[rateKey]float64),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-func (c *converter) rateToUSD(currency string) (float64, error) {
+// txnDate extracts the date portion of a transaction timestamp
+// (e.g. "2022/09/07 13:59" or "2022/09/07") and returns it in the
+// YYYY-MM-DD format expected by the Frankfurter API date query parameter.
+func txnDate(timestamp string) string {
+	date := strings.SplitN(timestamp, " ", 2)[0]
+	return strings.ReplaceAll(date, "/", "-")
+}
+
+func (c *converter) rateToUSD(currency, date string) (float64, error) {
 	if currency == "US Dollar" {
 		return 1.0, nil
 	}
@@ -67,14 +81,15 @@ func (c *converter) rateToUSD(currency string) (float64, error) {
 	if !ok {
 		return 0, fmt.Errorf("unknown currency: %s", currency)
 	}
-	if rate, ok := c.cache[code]; ok {
+	key := rateKey{code: code, date: date}
+	if rate, ok := c.cache[key]; ok {
 		return rate, nil
 	}
 
-	url := fmt.Sprintf("%s/rates?base=%s&quotes=USD", frankfurterBaseURL, code)
+	url := fmt.Sprintf("%s/rates?base=%s&quotes=USD&date=%s", frankfurterBaseURL, code, date)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
-		return 0, fmt.Errorf("fetch rate for %s: %w", currency, err)
+		return 0, fmt.Errorf("fetch rate for %s on %s: %w", currency, date, err)
 	}
 	defer resp.Body.Close()
 
@@ -88,10 +103,10 @@ func (c *converter) rateToUSD(currency string) (float64, error) {
 		return 0, fmt.Errorf("parse frankfurter response: %w", err)
 	}
 	if len(rates) == 0 {
-		return 0, fmt.Errorf("empty response for currency %s", currency)
+		return 0, fmt.Errorf("empty response for currency %s on %s", currency, date)
 	}
 
-	c.cache[code] = rates[0].Rate
+	c.cache[key] = rates[0].Rate
 	return rates[0].Rate, nil
 }
 
@@ -101,9 +116,9 @@ func (c *converter) convertBatch(batch protocol.Batch) protocol.Batch {
 		ClientID: batch.ClientID,
 	}
 	for _, txn := range batch.Transactions {
-		rate, err := c.rateToUSD(txn.PaymentCurrency)
+		rate, err := c.rateToUSD(txn.PaymentCurrency, txnDate(txn.Timestamp))
 		if err != nil {
-			log.Printf("conversion error for currency %q: %v — skipping transaction", txn.PaymentCurrency, err)
+			log.Printf("conversion error for currency %q on %s: %v — skipping transaction", txn.PaymentCurrency, txn.Timestamp, err)
 			continue
 		}
 		txn.AmountPaid = txn.AmountPaid * rate
