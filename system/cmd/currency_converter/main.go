@@ -124,13 +124,31 @@ func main() {
 	outputQueue := envOrDefault("OUTPUT_QUEUE", "converted_usd")
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr := envOrDefault("RABBITMQ_PORT", "5672")
+	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
+	instanceTotalStr := envOrDefault("INSTANCE_TOTAL", "1")
+	eofExchange := envOrDefault("EOF_EXCHANGE", "currency_converter_eof")
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		log.Fatalf("invalid RABBITMQ_PORT %q: %v", portStr, err)
 	}
+	instanceID, err := strconv.Atoi(instanceIDStr)
+	if err != nil {
+		log.Fatalf("invalid INSTANCE_ID %q: %v", instanceIDStr, err)
+	}
+	instanceTotal, err := strconv.Atoi(instanceTotalStr)
+	if err != nil {
+		log.Fatalf("invalid INSTANCE_TOTAL %q: %v", instanceTotalStr, err)
+	}
 
 	connSettings := middleware.ConnSettings{Hostname: host, Port: port}
+
+	// Build one routing key per instance for the EOF broadcast exchange.
+	allKeys := make([]string, instanceTotal)
+	for i := 0; i < instanceTotal; i++ {
+		allKeys[i] = fmt.Sprintf("currency_converter_%d", i+1)
+	}
+	ownKey := fmt.Sprintf("currency_converter_%d", instanceID)
 
 	consumer, err := middleware.CreateQueueMiddleware(inputQueue, connSettings)
 	if err != nil {
@@ -144,14 +162,55 @@ func main() {
 	}
 	defer producer.Close()
 
+	// eofBroadcast publishes to ALL instance keys so every sibling receives the EOF.
+	eofBroadcast, err := middleware.CreateExchangeMiddleware(eofExchange, allKeys, connSettings)
+	if err != nil {
+		log.Fatalf("connect to EOF broadcast exchange: %v", err)
+	}
+	defer eofBroadcast.Close()
+
+	// eofReceiver subscribes only to this instance's own routing key.
+	eofReceiver, err := middleware.CreateExchangeMiddleware(eofExchange, []string{ownKey}, connSettings)
+	if err != nil {
+		log.Fatalf("connect to EOF receiver exchange: %v", err)
+	}
+	defer eofReceiver.Close()
+
 	conv := newConverter()
 
-	log.Printf("currency converter started: %s -> %s", inputQueue, outputQueue)
+	log.Printf("currency converter %d/%d started: %s -> %s", instanceID, instanceTotal, inputQueue, outputQueue)
+
+	// Goroutine: each broadcasted EOF is forwarded downstream by this instance.
+	go func() {
+		if err := eofReceiver.StartConsuming(func(msg middleware.Message, ack func(), nack func()) {
+			if err := producer.Send(msg); err != nil {
+				log.Printf("send EOF to output queue: %v", err)
+				nack()
+				return
+			}
+			ack()
+		}); err != nil {
+			log.Fatalf("consuming from EOF exchange: %v", err)
+		}
+	}()
 
 	if err := consumer.StartConsuming(func(msg middleware.Message, ack func(), nack func()) {
 		var batch protocol.Batch
 		if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
 			log.Printf("unmarshal batch: %v — discarding", err)
+			ack()
+			return
+		}
+
+		if batch.Type == protocol.BatchTypeEOF {
+			// Re-broadcast to all instances (including self) via the exchange.
+			// Each instance will then forward one EOF downstream, so downstream
+			// receives exactly N EOFs for N converter instances.
+			if err := eofBroadcast.Send(msg); err != nil {
+				log.Printf("broadcast EOF: %v", err)
+				nack()
+				return
+			}
 			ack()
 			return
 		}
