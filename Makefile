@@ -14,6 +14,7 @@ generate-compose:
 	docker run --rm \
 		--env-file .env \
 		-v $(PWD)/system:/app/system \
+		-v $(PWD)/scripts:/app/scripts \
 		money-laundering python scripts/generate_compose.py
 
 generate-inputs:
