@@ -8,7 +8,8 @@ import (
 type AggregatorConfig struct {
 	InstanceID        int
 	ConnSettings      middleware.ConnSettings
-	InputQueue        string
+	InputExchange     string
+	InputKey          string
 	OutputQueue       string
 	ControlExchange   string
 	ControlKey        string

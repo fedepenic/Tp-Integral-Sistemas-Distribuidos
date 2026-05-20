@@ -15,7 +15,8 @@ func main() {
 	cfg := worker.AggregatorConfig{
 		InstanceID:        mustEnvInt("INSTANCE_ID"),
 		ConnSettings:      connSettings(),
-		InputQueue:        mustEnv("INPUT_QUEUE"),
+		InputExchange:     mustEnv("INPUT_EXCHANGE"),
+		InputKey:          mustEnv("INPUT_KEY"),
 		OutputQueue:       mustEnv("OUTPUT_QUEUE"),
 		ControlExchange:   mustEnv("EOF_CONTROL_EXCHANGE"),
 		ControlKey:        mustEnv("EOF_CONTROL_KEY"),

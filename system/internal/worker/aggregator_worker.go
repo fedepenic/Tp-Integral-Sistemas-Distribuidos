@@ -31,7 +31,13 @@ func NewAggregatorWorker[T any, K comparable, S any, O any](
 	if cfg.UpstreamInstances < 1 {
 		return nil, fmt.Errorf("upstream instances must be >= 1")
 	}
-	input, err := middleware.NewQueueMiddleware(cfg.InputQueue, cfg.ConnSettings)
+	if cfg.InputExchange == "" {
+		return nil, fmt.Errorf("input exchange is required")
+	}
+	if cfg.InputKey == "" {
+		return nil, fmt.Errorf("input key is required")
+	}
+	input, err := middleware.NewExchangeMiddleware(cfg.InputExchange, []string{cfg.InputKey}, cfg.ConnSettings)
 	if err != nil {
 		return nil, err
 	}

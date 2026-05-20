@@ -8,18 +8,25 @@ This package provides a reusable, stateful aggregator worker with:
 
 ## AggregatorWorker
 
-The worker consumes `protocol.Batch` messages from an input queue and emits
-`ResultBatch` messages to an output queue.
+The worker consumes `protocol.Batch` messages from a partitioned exchange/queue
+and emits `ResultBatch` messages to an output queue.
 
 ### Required config
 
 - `InstanceID`
 - `ConnSettings` (RabbitMQ host/port)
-- `InputQueue`
+- `InputExchange` (direct exchange for partitioned input)
+- `InputKey` (routing key for this instance)
 - `OutputQueue`
 - `ControlExchange`
 - `ControlKey`
 - `UpstreamInstances` (expected EOFs per client/task)
+
+### Routing notes
+
+- The input exchange must be `direct` and each instance should bind using a
+  single routing key (partition).
+- The upstream stage must publish batches using a deterministic key hash.
 
 ### EOF semantics
 

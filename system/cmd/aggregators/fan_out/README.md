@@ -6,7 +6,8 @@ This binary detects scatter candidates by source account.
 
 - `RABBITMQ_HOST`
 - `RABBITMQ_PORT`
-- `INPUT_QUEUE`
+- `INPUT_EXCHANGE`
+- `INPUT_KEY`
 - `OUTPUT_QUEUE`
 - `EOF_CONTROL_EXCHANGE`
 - `EOF_CONTROL_KEY`
