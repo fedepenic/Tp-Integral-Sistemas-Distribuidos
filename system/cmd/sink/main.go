@@ -31,6 +31,10 @@ func (s *sink) handle(msg middleware.Message, ack func(), nack func()) {
 
 	batch.QueryID = s.queryID
 
+	if batch.Type == protocol.BatchTypeEOF {
+		log.Printf("sink %s: EOF received for client %s, forwarding to report queue", s.queryID, batch.ClientID)
+	}
+
 	data, err := json.Marshal(batch)
 	if err != nil {
 		log.Printf("marshal batch: %v", err)
