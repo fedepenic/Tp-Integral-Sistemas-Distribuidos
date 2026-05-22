@@ -8,9 +8,9 @@ COMPOSE_OUT = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 GATEWAY_PORT = 8080
 
 # Each sink is always a single instance. Add an entry here when a new query
-# pipeline is wired end-to-end. (query_id, input_queue)
+# pipeline is wired end-to-end. (query_id, input_queue, upstream_count_env_var)
 SINKS = [
-    ("q1", "q1_results"),
+    ("q1", "q1_results", "N_FILTERS"),
 ]
 
 SERVICES = [
@@ -109,7 +109,8 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append("")
 
     # Sinks — always single-instance, one per query
-    for query_id, input_queue in SINKS:
+    for query_id, input_queue, upstream_env_var in SINKS:
+        upstream_total = int(env.get(upstream_env_var, 1))
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
@@ -118,6 +119,7 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
+        lines.append(f"      - UPSTREAM_TOTAL={upstream_total}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
         lines.append(f"    depends_on:")

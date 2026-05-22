@@ -181,6 +181,7 @@ services:
       - QUERY_ID=q1
       - INPUT_QUEUE=q1_results
       - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
     depends_on:
