@@ -80,6 +80,9 @@ func handleClient(conn net.Conn, producer middleware.Middleware) {
 		case protocol.BatchTypeAccounts:
 			totalAccounts += len(batch.Accounts)
 			log.Printf("[client %s] accounts batch of %d (total: %d)", clientID, len(batch.Accounts), totalAccounts)
+			if err := publish(producer, batch); err != nil {
+				log.Printf("[client %s] publish accounts: %v", clientID, err)
+			}
 
 		case protocol.BatchTypeTransactions:
 			totalTransactions += len(batch.Transactions)
