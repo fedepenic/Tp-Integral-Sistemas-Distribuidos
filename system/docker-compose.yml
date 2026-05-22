@@ -173,3 +173,17 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  sink_q1:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=q1
+      - INPUT_QUEUE=q1_results
+      - OUTPUT_QUEUE=reports
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+

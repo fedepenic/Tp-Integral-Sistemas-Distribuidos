@@ -41,6 +41,7 @@ type Account struct {
 type Batch struct {
 	Type         BatchType     `json:"type"`
 	ClientID     string        `json:"client_id,omitempty"`
+	QueryID      string        `json:"query_id,omitempty"`
 	Transactions []Transaction `json:"transactions,omitempty"`
 	Accounts     []Account     `json:"accounts,omitempty"`
 }
