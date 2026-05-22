@@ -8,6 +8,14 @@ COMPOSE_OUT = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 GATEWAY_PORT = 8080
 
 SERVICES = [
+    ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
+        "INPUT_QUEUE":      "raw_transactions",
+        "OUTPUT_EXCHANGE":  "transactions_clean",
+        "OUTPUT_KEYS":      "txn_for_usd,txn_for_q5",
+        "RABBITMQ_HOST":    "rabbitmq",
+        "RABBITMQ_PORT":    "5672",
+        "EOF_EXCHANGE":     "cleaner_eof",
+    }),
     ("filter",             "cmd/filter/Dockerfile",             "N_FILTERS",             {}),
     ("joiner",             "cmd/joiner/Dockerfile",             "N_JOINERS",             {}),
     ("counter",            "cmd/counter/Dockerfile",            "N_COUNTERS",            {}),
@@ -48,6 +56,9 @@ def build_compose(env: dict[str, str]) -> str:
     lines.append(f"      dockerfile: cmd/gateway/Dockerfile")
     lines.append(f"    environment:")
     lines.append(f"      - GATEWAY_PORT={GATEWAY_PORT}")
+    lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+    lines.append(f"      - RABBITMQ_PORT=5672")
+    lines.append(f"      - OUTPUT_QUEUE=raw_transactions")
     lines.append(f"    depends_on:")
     lines.append(f"      rabbitmq:")
     lines.append(f"        condition: service_healthy")

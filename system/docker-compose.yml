@@ -21,6 +21,9 @@ services:
       dockerfile: cmd/gateway/Dockerfile
     environment:
       - GATEWAY_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - OUTPUT_QUEUE=raw_transactions
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -56,6 +59,23 @@ services:
       - ../input:/data
     depends_on:
       - gateway
+
+  cleaner_1:
+    build:
+      context: .
+      dockerfile: cmd/cleaner/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - INPUT_QUEUE=raw_transactions
+      - OUTPUT_EXCHANGE=transactions_clean
+      - OUTPUT_KEYS=txn_for_usd,txn_for_q5
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - EOF_EXCHANGE=cleaner_eof
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   filter_1:
     build:
