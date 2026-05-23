@@ -1,11 +1,8 @@
 package main
 
 import (
-	"log"
-
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -24,32 +21,28 @@ import (
 // EOF:
 //   - Entrada: exchange "eof_q3_candidates", key "amt_avg_filter"
 //   - Salida:  exchange "eof_q3_data", key ""
+//
+// Variables de entorno:
+//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
+//   INPUT_QUEUE         — cola de entrada (q3_candidates)
+//   OUTPUT_QUEUE        — cola de salida  (q3_data)
+//   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_q3_candidates)
+//   EOF_INPUT_KEY       — routing key propia   (amt_avg_filter)
+//   EOF_OUTPUT_EXCHANGE — exchange EOF salida  (eof_q3_data)
 
 func main() {
 	conn := config.ConnSettings()
 
-	inputMW, err := middleware.NewQueueMiddleware("q3_candidates", conn)
-	if err != nil {
-		log.Fatalf("[amt_avg_filter] input queue: %v", err)
-	}
+	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW, err := middleware.NewQueueMiddleware("q3_data", conn)
-	if err != nil {
-		log.Fatalf("[amt_avg_filter] output queue: %v", err)
-	}
+	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW, err := middleware.NewExchangeMiddleware("eof_q3_candidates", []string{"amt_avg_filter"}, conn)
-	if err != nil {
-		log.Fatalf("[amt_avg_filter] eof input exchange: %v", err)
-	}
+	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
 	defer eofInMW.Close()
 
-	eofOutMW, err := middleware.NewExchangeMiddleware("eof_q3_data", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[amt_avg_filter] eof output exchange: %v", err)
-	}
+	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
 	defer eofOutMW.Close()
 
 	filterworker.NewWorker(

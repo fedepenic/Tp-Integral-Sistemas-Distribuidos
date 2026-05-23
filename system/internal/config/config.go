@@ -40,3 +40,31 @@ func UpstreamCount() int {
 	}
 	return n
 }
+
+// Queue retorna un QueueMiddleware usando el nombre leído de la env var key.
+func Queue(key string, conn middleware.ConnSettings) middleware.Middleware {
+	mw, err := middleware.NewQueueMiddleware(MustEnv(key), conn)
+	if err != nil {
+		log.Fatalf("[config] queue %s (%s): %v", key, MustEnv(key), err)
+	}
+	return mw
+}
+
+// Exchange retorna un ExchangeMiddleware usando nombre y keys leídos del entorno.
+//   - nameKey:  env var con el nombre del exchange
+//   - routingKeys: keys de binding fijas (vacío para direct con keys dinámicas,
+//     []string{""} para fanout)
+func Exchange(nameKey string, routingKeys []string, conn middleware.ConnSettings) middleware.Middleware {
+	name := MustEnv(nameKey)
+	mw, err := middleware.NewExchangeMiddleware(name, routingKeys, conn)
+	if err != nil {
+		log.Fatalf("[config] exchange %s (%s): %v", nameKey, name, err)
+	}
+	return mw
+}
+
+// ExchangeWithKey retorna un ExchangeMiddleware cuya única routing key
+// también se lee del entorno. Útil para exchanges de EOF con key fija.
+func ExchangeWithKey(nameKey string, routingKeyEnv string, conn middleware.ConnSettings) middleware.Middleware {
+	return Exchange(nameKey, []string{MustEnv(routingKeyEnv)}, conn)
+}

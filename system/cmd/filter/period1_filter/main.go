@@ -1,12 +1,10 @@
 package main
 
 import (
-	"log"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -30,6 +28,18 @@ import (
 //   - Salida 1: exchange "eof_usd_period1_for_q3",  key ""
 //   - Salida 2: exchange "eof_usd_period1_for_q4_fo", key ""
 //   - Salida 3: exchange "eof_usd_period1_for_q4_fi", key ""
+//
+// Variables de entorno:
+//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
+//   INPUT_QUEUE              — cola de entrada        (usd_for_p1)
+//   OUTPUT_Q3_EXCHANGE       — exchange salida Q3     (usd_period1_for_q3)
+//   OUTPUT_Q4_FO_EXCHANGE    — exchange salida Q4 FO  (usd_period1_for_q4_fo)
+//   OUTPUT_Q4_FI_EXCHANGE    — exchange salida Q4 FI  (usd_period1_for_q4_fi)
+//   EOF_INPUT_EXCHANGE       — exchange EOF entrada    (eof_usd_filtered)
+//   EOF_INPUT_KEY            — routing key propia      (period1_filter)
+//   EOF_Q3_EXCHANGE          — exchange EOF salida Q3  (eof_usd_period1_for_q3)
+//   EOF_Q4_FO_EXCHANGE       — exchange EOF salida FO  (eof_usd_period1_for_q4_fo)
+//   EOF_Q4_FI_EXCHANGE       — exchange EOF salida FI  (eof_usd_period1_for_q4_fi)
 
 const dateLayout = "2006-01-02"
 
@@ -40,52 +50,28 @@ func main() {
 	end, _ := time.Parse(dateLayout, "2022-09-05")
 	end = end.Add(24 * time.Hour)
 
-	inputMW, err := middleware.NewQueueMiddleware("usd_for_p1", conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] input queue: %v", err)
-	}
+	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outQ3MW, err := middleware.NewExchangeMiddleware("usd_period1_for_q3", []string{}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] output q3 exchange: %v", err)
-	}
+	outQ3MW := config.Exchange("OUTPUT_Q3_EXCHANGE", []string{}, conn)
 	defer outQ3MW.Close()
 
-	outFOMW, err := middleware.NewExchangeMiddleware("usd_period1_for_q4_fo", []string{}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] output q4_fo exchange: %v", err)
-	}
+	outFOMW := config.Exchange("OUTPUT_Q4_FO_EXCHANGE", []string{}, conn)
 	defer outFOMW.Close()
 
-	outFIMW, err := middleware.NewExchangeMiddleware("usd_period1_for_q4_fi", []string{}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] output q4_fi exchange: %v", err)
-	}
+	outFIMW := config.Exchange("OUTPUT_Q4_FI_EXCHANGE", []string{}, conn)
 	defer outFIMW.Close()
 
-	eofInMW, err := middleware.NewExchangeMiddleware("eof_usd_filtered", []string{"period1_filter"}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] eof input exchange: %v", err)
-	}
+	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
 	defer eofInMW.Close()
 
-	eofQ3MW, err := middleware.NewExchangeMiddleware("eof_usd_period1_for_q3", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] eof q3 exchange: %v", err)
-	}
+	eofQ3MW := config.Exchange("EOF_Q3_EXCHANGE", []string{""}, conn)
 	defer eofQ3MW.Close()
 
-	eofFOMW, err := middleware.NewExchangeMiddleware("eof_usd_period1_for_q4_fo", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] eof q4_fo exchange: %v", err)
-	}
+	eofFOMW := config.Exchange("EOF_Q4_FO_EXCHANGE", []string{""}, conn)
 	defer eofFOMW.Close()
 
-	eofFIMW, err := middleware.NewExchangeMiddleware("eof_usd_period1_for_q4_fi", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[period1_filter] eof q4_fi exchange: %v", err)
-	}
+	eofFIMW := config.Exchange("EOF_Q4_FI_EXCHANGE", []string{""}, conn)
 	defer eofFIMW.Close()
 
 	filterworker.NewWorker(

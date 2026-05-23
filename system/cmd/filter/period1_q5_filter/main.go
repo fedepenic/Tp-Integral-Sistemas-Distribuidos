@@ -1,12 +1,10 @@
 package main
 
 import (
-	"log"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -26,6 +24,14 @@ import (
 // EOF:
 //   - Entrada: exchange "eof_cleaner",       key "period1_q5_filter"
 //   - Salida:  exchange "eof_period1_for_q5", key ""
+//
+// Variables de entorno:
+//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
+//   INPUT_QUEUE         — cola de entrada (txn_for_q5)
+//   OUTPUT_QUEUE        — cola de salida  (period1_for_q5)
+//   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_cleaner)
+//   EOF_INPUT_KEY       — routing key propia   (period1_q5_filter)
+//   EOF_OUTPUT_EXCHANGE — exchange EOF salida  (eof_period1_for_q5)
 
 const dateLayout = "2006-01-02"
 
@@ -36,28 +42,16 @@ func main() {
 	end, _ := time.Parse(dateLayout, "2022-09-05")
 	end = end.Add(24 * time.Hour)
 
-	inputMW, err := middleware.NewQueueMiddleware("txn_for_q5", conn)
-	if err != nil {
-		log.Fatalf("[period1_q5_filter] input queue: %v", err)
-	}
+	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW, err := middleware.NewQueueMiddleware("period1_for_q5", conn)
-	if err != nil {
-		log.Fatalf("[period1_q5_filter] output queue: %v", err)
-	}
+	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW, err := middleware.NewExchangeMiddleware("eof_cleaner", []string{"period1_q5_filter"}, conn)
-	if err != nil {
-		log.Fatalf("[period1_q5_filter] eof input exchange: %v", err)
-	}
+	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
 	defer eofInMW.Close()
 
-	eofOutMW, err := middleware.NewExchangeMiddleware("eof_period1_for_q5", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[period1_q5_filter] eof output exchange: %v", err)
-	}
+	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
 	defer eofOutMW.Close()
 
 	filterworker.NewWorker(

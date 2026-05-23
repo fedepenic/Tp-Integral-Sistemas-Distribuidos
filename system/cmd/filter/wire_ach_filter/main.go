@@ -1,14 +1,8 @@
 package main
 
 import (
-	"log"
-	"os"
-	"os/signal"
-	"strconv"
-	"syscall"
-
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -25,48 +19,31 @@ import (
 // EOF:
 //   - Entrada: exchange "eof_period1_for_q5", key "wireach_filter"
 //   - Salida:  exchange "eof_wireach_txn",    key ""
+//
+// Variables de entorno:
+//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
+//   INPUT_QUEUE         — cola de entrada (period1_for_q5)
+//   OUTPUT_QUEUE        — cola de salida  (wireach_txn)
+//   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_period1_for_q5)
+//   EOF_INPUT_KEY       — routing key propia   (wireach_filter)
+//   EOF_OUTPUT_EXCHANGE — exchange EOF salida  (eof_wireach_txn)
 
 func main() {
-	conn := connSettings()
+	conn := config.ConnSettings()
 
-	inputMW, err := middleware.NewQueueMiddleware("period1_for_q5", conn)
-	if err != nil {
-		log.Fatalf("[wireach_filter] input queue: %v", err)
-	}
+	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW, err := middleware.NewQueueMiddleware("wireach_txn", conn)
-	if err != nil {
-		log.Fatalf("[wireach_filter] output queue: %v", err)
-	}
+	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW, err := middleware.NewExchangeMiddleware(
-		"eof_period1_for_q5",
-		[]string{"wireach_filter"},
-		conn,
-	)
-	if err != nil {
-		log.Fatalf("[wireach_filter] eof input exchange: %v", err)
-	}
+	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
 	defer eofInMW.Close()
 
-	eofOutMW, err := middleware.NewExchangeMiddleware("eof_wireach_txn", []string{""}, conn)
-	if err != nil {
-		log.Fatalf("[wireach_filter] eof output exchange: %v", err)
-	}
+	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
 	defer eofOutMW.Close()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		log.Println("[wireach_filter] SIGTERM — shutting down")
-		inputMW.StopConsuming()
-		eofInMW.StopConsuming()
-	}()
-
-	worker := filterworker.NewWorker(
+	filterworker.NewWorker(
 		func(t protocol.Transaction) bool {
 			return t.PaymentFormat == "Wire" || t.PaymentFormat == "ACH"
 		},
@@ -75,32 +52,6 @@ func main() {
 		},
 		inputMW,
 		eofInMW,
-		upstreamCount(),
-	)
-
-	worker.Run()
-}
-
-func connSettings() middleware.ConnSettings {
-	port, err := strconv.Atoi(mustEnv("RABBITMQ_PORT"))
-	if err != nil {
-		log.Fatalf("[wireach_filter] RABBITMQ_PORT must be a number: %v", err)
-	}
-	return middleware.ConnSettings{Hostname: mustEnv("RABBITMQ_HOST"), Port: port}
-}
-
-func upstreamCount() int {
-	n, err := strconv.Atoi(mustEnv("UPSTREAM_INSTANCES"))
-	if err != nil || n < 1 {
-		log.Fatalf("[wireach_filter] UPSTREAM_INSTANCES must be a positive integer: %v", err)
-	}
-	return n
-}
-
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("[wireach_filter] env var %s is required", key)
-	}
-	return v
+		config.UpstreamCount(),
+	).Run()
 }
