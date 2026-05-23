@@ -141,9 +141,7 @@ flowchart LR
     UserIn(["User"]):::actorM
     UserOut(["User"]):::actorM
     TxnDS["Transactions File"]:::file
-    %% API externa: cotizaciones diarias fetcheadas vía HTTP
-    ERDS(["Frankfurter API"]):::extApi
-
+    BanksDS["Banks File"]:::file
     subgraph SYS["Sistema: Money Laundering Analysis"]
         direction LR
 
@@ -175,12 +173,13 @@ flowchart LR
         %% ─── Q1: USD < 50 ──────────────────────────────────────────────
         AmtFilt50(["Amount &lt; 50 Filter"]):::filterM
         q1_q(["q1_data"]):::queue
-        SinkQ1(("Q1\nUSD &lt; 50")):::sink
 
         %% ─── Q2: Max USD por banco ────────────────────────────────────
-        MaxBank(["Max Per Bank"]):::counterM
+        %% MaxBank hace un JOIN entre transacciones (usd_for_q2) y
+        %% la info de bancos (banks_q) que llega directamente del Cleaner.
+        banks_q(["banks_data"]):::queue
+        MaxBank(["Max Per Bank\n(JOIN txn + banks)"]):::counterM
         q2_q(["q2_data"]):::queue
-        SinkQ2(("Q2\nMax/Bank")):::sink
 
         %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
         P2Filt(["Period 2 Filter\n09-06 / 09-15"]):::filterM
@@ -203,7 +202,6 @@ flowchart LR
         q3c_q(["q3_candidates"]):::queue
         SmallFilt(["Amount &lt; avg/100 Filter"]):::filterM
         q3_q(["q3_data"]):::queue
-        SinkQ3(("Q3\nSmall Txn")):::sink
 
         %% ─── Q4 — pipeline FanOut ─────────────────────────────────────
         FanOut(["Fan-Out Detector\n5+ destinos"]):::counterM
@@ -224,7 +222,6 @@ flowchart LR
         %% mismo (cada instancia ve solo una B aislada).
         SGAgg(["SG Aggregator\n5+ intermediarias"]):::counterM
         q4_q(["q4_data"]):::queue
-        SinkQ4(("Q4\nScatter\nGather")):::sink
 
         %% ─── Q5 — pipeline Wire/ACH (no necesita USD filter) ─────────
         %% Pipeline lineal y largo (12 nodos): se pliega vertical (TB)
@@ -247,6 +244,14 @@ flowchart LR
             %% en el total global. Trabajo O(N_instancias), no O(N_txns).
             Q5Sum(["Sum Reducer"]):::counter
             q5_q(["q5_count"]):::queue
+        end
+
+        subgraph SINKS[" "]
+            direction TB
+            SinkQ1(("Q1\nUSD &lt; 50")):::sink
+            SinkQ2(("Q2\nMax/Bank")):::sink
+            SinkQ3(("Q3\nSmall Txn")):::sink
+            SinkQ4(("Q4\nScatter\nGather")):::sink
             SinkQ5(("Q5\nCount")):::sink
         end
 
@@ -262,12 +267,10 @@ flowchart LR
         Watcher(["Watcher"]):::watcher
     end
 
-    %% El cliente posee el archivo de transacciones y lo pasa al Terminal
+    %% El cliente posee ambos archivos y los pasa al Terminal
     TxnDS  --> UserIn
+    BanksDS --> UserIn
     UserIn --> Gateway
-    %% El Currency Converter consulta la API vía HTTP y cachea localmente
-    ERDS --> Conv
-
     Gateway --> raw_q --> Cleaner --> txn_q
 
     %% ─── Bindings del exchange transactions_clean ────────────────
@@ -293,6 +296,9 @@ flowchart LR
     %% USDFilt publica con routing_key = hash(bank_id) % N.
     %% El direct exchange usd_for_q2 rutea a la partition queue
     %% correcta de MaxBank. Sin plugins, sin Router worker.
+    %% El Cleaner también envía el archivo de bancos directo a MaxBank;
+    %% el JOIN entre transacciones e info de bancos ocurre en MaxBank.
+    Cleaner --> banks_q --> MaxBank
     usd_for_q2 -->|key: bank_id| MaxBank
     MaxBank --> q2_q --> SinkQ2
 
@@ -349,12 +355,17 @@ flowchart LR
     report_q --> GatewayOut
     GatewayOut -.-> UserOut
 
+    %% API externa: cotizaciones diarias fetcheadas vía HTTP y cachea localmente
+    ERDS(["Frankfurter API"]):::extApi
+    ERDS --> Conv
+
     %% Q3 y Q4 tienen ahora el mismo largo después del join
     %% (5 nodos: Joiner → queue → worker → queue → sink), así que el
     %% layout se alinea naturalmente sin anchors invisibles.
 
     %% Subgraphs invisibles (solo agrupan para layout interno TB)
     style Q5Pipe fill:none,stroke:none
+    style SINKS fill:none,stroke:none
     </div>
   </div>
 </div>
