@@ -268,78 +268,78 @@ flowchart LR
     end
 
     %% ─── Entry / User ────────────────────────────────────────────
-    TxnDS  -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Amount Received, Receiving Currency, Payment Format»"| UserIn
-    BanksDS -->|"«Bank Name, Bank ID, Account Number, Entity ID, Entity Name»"| UserIn
+    TxnDS  -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| UserIn
+    BanksDS -->|"«Bank Name,\nBank ID,\nAccount Number,\nEntity ID,\nEntity Name»"| UserIn
     UserIn -->|"«transactions file + accounts file»"| Gateway
 
     %% ─── Main pipeline ───────────────────────────────────────────
-    Gateway -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Amount Received, Receiving Currency, Payment Format»"| raw_q
-    raw_q -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Amount Received, Receiving Currency, Payment Format»"| Cleaner
-    Cleaner -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Payment Format»"| txn_q
-    Cleaner -->|"«Bank ID, Bank Name»"| banks_q
+    Gateway -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| raw_q
+    raw_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| Cleaner
+    Cleaner -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| txn_q
+    Cleaner -->|"«Bank ID,\nBank Name»"| banks_q
 
-    txn_q -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Payment Format»"| bind_for_usd
-    txn_q -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Payment Format»"| bind_for_q5
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_usd
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_q5
 
-    bind_for_usd -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Currency, Payment Format»"| USDFilt
-    USDFilt -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Format»"| usd_fanout
+    bind_for_usd -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| USDFilt
+    USDFilt -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_fanout
 
-    usd_fanout -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Format»"| usd_for_q1
-    usd_fanout -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Format»"| usd_for_q2
-    usd_fanout -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Format»"| usd_for_q3p2
-    usd_fanout -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid, Payment Format»"| usd_for_p1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q3p2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_p1
 
     %% ─── Q1: USD < 50 ─────────────────────────────────────────────
-    usd_for_q1 -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid»"| AmtFilt50
-    AmtFilt50 -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid»"| q1_q
-    q1_q -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid»"| SinkQ1
+    usd_for_q1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid»"| AmtFilt50
+    AmtFilt50 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid»"| q1_q
+    q1_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid»"| SinkQ1
 
     %% ─── Q2: Max USD por banco ────────────────────────────────────
-    banks_q -->|"«Bank ID, Bank Name»"| MaxBank
-    usd_for_q2 -->|"key: From Bank · «From Bank, Amount Paid»"| MaxBank
-    MaxBank -->|"«From Bank, max(Amount Paid)»"| q2_q
-    q2_q -->|"«From Bank, max(Amount Paid)»"| SinkQ2
+    banks_q -->|"«Bank ID,\nBank Name»"| MaxBank
+    usd_for_q2 -->|"key: From Bank · «From Bank,\nAmount Paid»"| MaxBank
+    MaxBank -->|"«From Bank,\nmax(Amount Paid)»"| q2_q
+    q2_q -->|"«From Bank,\nmax(Amount Paid)»"| SinkQ2
 
     %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
-    usd_for_q3p2 -->|"«Timestamp, Payment Format, Amount Paid»"| P2Filt
-    P2Filt -->|"«Timestamp, Payment Format, Amount Paid»"| p2_q
-    p2_q -->|"key: Payment Format · «Timestamp, Payment Format, Amount Paid»"| JoinQ3
+    usd_for_q3p2 -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| P2Filt
+    P2Filt -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| p2_q
+    p2_q -->|"key: Payment Format · «Timestamp,\nPayment Format,\nAmount Paid»"| JoinQ3
 
     %% ─── Period 1 Filter único ───────────────────────────────────
-    usd_for_p1 -->|"«Timestamp, From Account, To Account, Payment Format, Amount Paid»"| P1Filt
-    P1Filt -->|"«Payment Format, Amount Paid»"| usdp1_q3
-    P1Filt -->|"«From Account, To Account»"| usdp1_q4o
-    P1Filt -->|"«From Account, To Account»"| usdp1_q4i
+    usd_for_p1 -->|"«Timestamp,\nFrom Account,\nTo Account,\nPayment Format,\nAmount Paid»"| P1Filt
+    P1Filt -->|"«Payment Format,\nAmount Paid»"| usdp1_q3
+    P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4o
+    P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4i
 
     %% ─── Q3-P1: AvgFmt particionado por payment_format ───────────
-    usdp1_q3 -->|"key: Payment Format · «Payment Format, Amount Paid»"| AvgFmt
-    AvgFmt -->|"«Payment Format, avg(Amount Paid)»"| avg_q
-    avg_q -->|"key: Payment Format · «Payment Format, avg(Amount Paid)»"| JoinQ3
-    JoinQ3 -->|"«Timestamp, Payment Format, Amount Paid»"| q3c_q
-    q3c_q -->|"«Timestamp, Payment Format, Amount Paid»"| SmallFilt
-    SmallFilt -->|"«Timestamp, Payment Format, Amount Paid»"| q3_q
-    q3_q -->|"«Timestamp, Payment Format, Amount Paid»"| SinkQ3
+    usdp1_q3 -->|"key: Payment Format · «Payment Format,\nAmount Paid»"| AvgFmt
+    AvgFmt -->|"«Payment Format,\navg(Amount Paid)»"| avg_q
+    avg_q -->|"key: Payment Format · «Payment Format,\navg(Amount Paid)»"| JoinQ3
+    JoinQ3 -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| q3c_q
+    q3c_q -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| SmallFilt
+    SmallFilt -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| q3_q
+    q3_q -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| SinkQ3
 
     %% ─── Q4: scatter-gather (FanOut + FanIn) ──────────────────────
-    usdp1_q4o -->|"key: From Account · «From Account, To Account»"| FanOut
-    FanOut -->|"«From Account, To Account»"| fo_q
-    fo_q -->|"key: From Account · «From Account, To Account»"| SGJoin
+    usdp1_q4o -->|"key: From Account · «From Account,\nTo Account»"| FanOut
+    FanOut -->|"«From Account,\nTo Account»"| fo_q
+    fo_q -->|"key: From Account · «From Account,\nTo Account»"| SGJoin
 
-    usdp1_q4i -->|"key: To Account · «From Account, To Account»"| FanIn
-    FanIn -->|"«From Account, To Account»"| fi_q
-    fi_q -->|"key: To Account · «From Account, To Account»"| SGJoin
+    usdp1_q4i -->|"key: To Account · «From Account,\nTo Account»"| FanIn
+    FanIn -->|"«From Account,\nTo Account»"| fi_q
+    fi_q -->|"key: To Account · «From Account,\nTo Account»"| SGJoin
 
-    SGJoin -->|"«From Account, Middle Account, To Account»"| sg_triples_q
-    sg_triples_q -->|"key: (From Account, To Account) · «From Account, Middle Account, To Account»"| SGAgg
-    SGAgg -->|"«From Account, To Account»"| q4_q
-    q4_q -->|"«From Account, To Account»"| SinkQ4
+    SGJoin -->|"«From Account,\nMiddle Account,\nTo Account»"| sg_triples_q
+    sg_triples_q -->|"key: (From Account, To Account) · «From Account,\nMiddle Account,\nTo Account»"| SGAgg
+    SGAgg -->|"«From Account,\nTo Account»"| q4_q
+    q4_q -->|"«From Account,\nTo Account»"| SinkQ4
 
     %% ─── Q5: Wire/ACH en Period 1 con USD < 1 ────────────────────
-    bind_for_q5 -->|"«Timestamp, Payment Format, Amount Paid, Payment Currency»"| P1Filt_Q5
-    P1Filt_Q5 -->|"«Timestamp, Payment Format, Amount Paid, Payment Currency»"| period1_q5
-    period1_q5 -->|"«Timestamp, Payment Format, Amount Paid, Payment Currency»"| WAFilt
-    WAFilt -->|"«Amount Paid, Payment Currency»"| wa_q
-    wa_q -->|"«Amount Paid, Payment Currency»"| Conv
+    bind_for_q5 -->|"«Timestamp,\nPayment Format,\nAmount Paid,\nPayment Currency»"| P1Filt_Q5
+    P1Filt_Q5 -->|"«Timestamp,\nPayment Format,\nAmount Paid,\nPayment Currency»"| period1_q5
+    period1_q5 -->|"«Timestamp,\nPayment Format,\nAmount Paid,\nPayment Currency»"| WAFilt
+    WAFilt -->|"«Amount Paid,\nPayment Currency»"| wa_q
+    wa_q -->|"«Amount Paid,\nPayment Currency»"| Conv
     Conv -->|"«amount_usd»"| conv_q
     conv_q -->|"«amount_usd»"| AmtFiltQ5
     AmtFiltQ5 -->|"«amount_usd»"| q5f_q
@@ -350,10 +350,10 @@ flowchart LR
     q5_q -->|"«total_count»"| SinkQ5
 
     %% ─── Sinks → report ─────────────────────────────────────────
-    SinkQ1 -->|"«Timestamp, From Bank, From Account, To Bank, To Account, Amount Paid»"| report_q
-    SinkQ2 -->|"«From Bank, max(Amount Paid)»"| report_q
-    SinkQ3 -->|"«Timestamp, Payment Format, Amount Paid»"| report_q
-    SinkQ4 -->|"«From Account, To Account»"| report_q
+    SinkQ1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid»"| report_q
+    SinkQ2 -->|"«From Bank,\nmax(Amount Paid)»"| report_q
+    SinkQ3 -->|"«Timestamp,\nPayment Format,\nAmount Paid»"| report_q
+    SinkQ4 -->|"«From Account,\nTo Account»"| report_q
     SinkQ5 -->|"«total_count»"| report_q
     report_q -->|"«Q1..Q5 results»"| GatewayOut
     GatewayOut -.->|"«Q1..Q5 results»"| UserOut
