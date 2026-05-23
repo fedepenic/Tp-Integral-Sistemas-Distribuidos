@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -202,8 +201,7 @@ func envOrDefault(key, def string) string {
 
 func main() {
 	inputQueue := envOrDefault("INPUT_QUEUE", "raw_transactions")
-	outputExchange := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
-	outputKeysRaw := envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5")
+	outputQueue := envOrDefault("OUTPUT_QUEUE", "q1_results")
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr := envOrDefault("RABBITMQ_PORT", "5672")
 	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
@@ -223,8 +221,6 @@ func main() {
 		log.Fatalf("invalid INSTANCE_TOTAL %q: %v", instanceTotalStr, err)
 	}
 
-	outputKeys := strings.Split(outputKeysRaw, ",")
-
 	connSettings := middleware.ConnSettings{Hostname: host, Port: port}
 
 	allEOFKeys := make([]string, instanceTotal)
@@ -239,9 +235,9 @@ func main() {
 	}
 	defer consumer.Close()
 
-	producer, err := middleware.CreateExchangeMiddleware(outputExchange, outputKeys, connSettings)
+	producer, err := middleware.CreateQueueMiddleware(outputQueue, connSettings)
 	if err != nil {
-		log.Fatalf("connect to output exchange %q: %v", outputExchange, err)
+		log.Fatalf("connect to output queue %q: %v", outputQueue, err)
 	}
 	defer producer.Close()
 
@@ -261,7 +257,7 @@ func main() {
 
 	n := newNode(producer, eofBroadcast)
 
-	log.Printf("cleaner %d/%d started: %s -> %s %v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
+	log.Printf("cleaner %d/%d started: %s -> %s", instanceID, instanceTotal, inputQueue, outputQueue)
 
 	go func() {
 		if err := eofReceiver.StartConsuming(n.handleEOF); err != nil {

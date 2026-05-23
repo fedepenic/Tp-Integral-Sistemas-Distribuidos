@@ -66,7 +66,7 @@ def build_compose(env: dict[str, str]) -> str:
     lines.append(f"      - RABBITMQ_PORT=5672")
     lines.append(f"      - OUTPUT_QUEUE=raw_transactions")
     lines.append(f"      - REPORTS_QUEUE=reports")
-    lines.append(f"      - OUTPUT_DIR=/output")
+    lines.append(f"      - OUTPUT_DIR=/output/system")
     lines.append(f"    volumes:")
     lines.append(f"      - ../output:/output")
     lines.append(f"    depends_on:")
