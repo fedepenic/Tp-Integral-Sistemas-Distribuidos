@@ -42,7 +42,8 @@
     }
     .controls button:hover { background: rgba(255,255,255,0.35); }
 
-    #zoom-label { color: white; font-size: 0.85rem; min-width: 46px; text-align: center; }
+    #zoom-input { width: 52px; text-align: center; font-size: 0.85rem; background: #374151; color: white; border: 1px solid #4b5563; border-radius: 4px; padding: 2px 4px; -moz-appearance: textfield; }
+  #zoom-input::-webkit-inner-spin-button, #zoom-input::-webkit-outer-spin-button { -webkit-appearance: none; }
 
     .legend {
       display: flex;
@@ -91,7 +92,7 @@
   <div class="controls">
     <button id="btn-fit">Ajustar</button>
     <button id="btn-minus">−</button>
-    <span id="zoom-label">100%</span>
+    <input id="zoom-input" type="number" value="100" min="10" max="400" step="5">%
     <button id="btn-plus">+</button>
     <button id="btn-reset">Reset</button>
   </div>
@@ -389,14 +390,14 @@ flowchart LR
 
   const wrapper   = document.getElementById('canvas-wrapper');
   const container = document.getElementById('diagram-container');
-  const zoomLabel = document.getElementById('zoom-label');
+  const zoomInput = document.getElementById('zoom-input');
 
   let scale = 1, panX = 0, panY = 0;
   let isDragging = false, startX, startY;
 
   function applyTransform() {
     container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    zoomLabel.textContent = Math.round(scale * 100) + '%';
+    zoomInput.value = Math.round(scale * 100);
   }
 
   function fitDiagram() {
@@ -619,6 +620,12 @@ flowchart LR
   document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.05, 0.1); applyTransform(); });
   document.getElementById('btn-reset').addEventListener('click', () => { scale = 1; panX = 0; panY = 0; applyTransform(); });
   document.getElementById('btn-fit').addEventListener('click',   fitDiagram);
+
+  zoomInput.addEventListener('change', () => {
+    const v = Math.min(Math.max(parseInt(zoomInput.value, 10) || 100, 10), 400);
+    scale = v / 100;
+    applyTransform();
+  });
 
   wrapper.addEventListener('wheel', e => {
     e.preventDefault();
