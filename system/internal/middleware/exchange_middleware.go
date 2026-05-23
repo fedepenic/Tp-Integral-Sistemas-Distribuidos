@@ -120,24 +120,41 @@ func (em *ExchangeMiddleware) StopConsuming() error {
 	return nil
 }
 
+// Send publica el mensaje a todas las keys configuradas en el constructor.
+// Útil para fanout o cuando la routing key es fija y conocida de antemano.
 func (em *ExchangeMiddleware) Send(msg Message) error {
 	if len(em.keys) == 0 {
 		return ErrMessageMiddlewareMessage
 	}
 	for _, key := range em.keys {
-		if err := em.ch.PublishWithContext(
-			context.Background(),
-			em.exchange,
-			key,
-			false,
-			false,
-			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        []byte(msg.Body),
-			},
-		); err != nil {
-			return fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+		if err := em.publish(msg, key); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// SendWithKey publica el mensaje usando la routing key provista,
+// ignorando las keys configuradas en el constructor.
+// Útil para direct exchanges donde la key se determina en ejecución.
+func (em *ExchangeMiddleware) SendWithKey(msg Message, key string) error {
+	return em.publish(msg, key)
+}
+
+// publish es el método interno que realiza el publish a RabbitMQ.
+func (em *ExchangeMiddleware) publish(msg Message, key string) error {
+	if err := em.ch.PublishWithContext(
+		context.Background(),
+		em.exchange,
+		key,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte(msg.Body),
+		},
+	); err != nil {
+		return fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
 	}
 	return nil
 }

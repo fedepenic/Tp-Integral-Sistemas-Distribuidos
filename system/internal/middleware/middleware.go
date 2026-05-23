@@ -39,7 +39,14 @@ type Middleware interface {
 	//Si ocurre un error interno que no puede resolverse devuelve ErrMessageMiddlewareMessage.
 	Send(msg Message) error
 
-	//Se desconecta de la cola o exchange al que estaba conectado.
-	//Si ocurre un error interno que no puede resolverse devuelve ErrMessageMiddlewareClose.
+	// SendWithKey envía un mensaje usando una routing key específica.
+	// En QueueMiddleware la key se ignora (la queue ya tiene su nombre fijo).
+	// En ExchangeMiddleware usa la key provista en lugar de las configuradas.
+	// Si se pierde la conexión devuelve ErrMessageMiddlewareDisconnected.
+	// Si ocurre un error interno devuelve ErrMessageMiddlewareMessage.
+	SendWithKey(msg Message, key string) error
+
+	// Se desconecta de la cola o exchange al que estaba conectado.
+	// Si ocurre un error interno devuelve ErrMessageMiddlewareClose.
 	Close() error
 }
