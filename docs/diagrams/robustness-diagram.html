@@ -141,9 +141,7 @@ flowchart LR
     UserIn(["User"]):::actorM
     UserOut(["User"]):::actorM
     TxnDS["Transactions File"]:::file
-    %% API externa: cotizaciones diarias fetcheadas vía HTTP
-    ERDS(["Frankfurter API"]):::extApi
-
+    BanksDS["Banks File"]:::file
     subgraph SYS["Sistema: Money Laundering Analysis"]
         direction LR
 
@@ -175,12 +173,13 @@ flowchart LR
         %% ─── Q1: USD < 50 ──────────────────────────────────────────────
         AmtFilt50(["Amount &lt; 50 Filter"]):::filterM
         q1_q(["q1_data"]):::queue
-        SinkQ1(("Q1\nUSD &lt; 50")):::sink
 
         %% ─── Q2: Max USD por banco ────────────────────────────────────
-        MaxBank(["Max Per Bank"]):::counterM
+        %% MaxBank hace un JOIN entre transacciones (usd_for_q2) y
+        %% la info de bancos (banks_q) que llega directamente del Cleaner.
+        banks_q(["banks_data"]):::queue
+        MaxBank(["Max Per Bank\n(JOIN txn + banks)"]):::counterM
         q2_q(["q2_data"]):::queue
-        SinkQ2(("Q2\nMax/Bank")):::sink
 
         %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
         P2Filt(["Period 2 Filter\n09-06 / 09-15"]):::filterM
@@ -203,7 +202,6 @@ flowchart LR
         q3c_q(["q3_candidates"]):::queue
         SmallFilt(["Amount &lt; avg/100 Filter"]):::filterM
         q3_q(["q3_data"]):::queue
-        SinkQ3(("Q3\nSmall Txn")):::sink
 
         %% ─── Q4 — pipeline FanOut ─────────────────────────────────────
         FanOut(["Fan-Out Detector\n5+ destinos"]):::counterM
@@ -224,7 +222,6 @@ flowchart LR
         %% mismo (cada instancia ve solo una B aislada).
         SGAgg(["SG Aggregator\n5+ intermediarias"]):::counterM
         q4_q(["q4_data"]):::queue
-        SinkQ4(("Q4\nScatter\nGather")):::sink
 
         %% ─── Q5 — pipeline Wire/ACH (no necesita USD filter) ─────────
         %% Pipeline lineal y largo (12 nodos): se pliega vertical (TB)
@@ -247,6 +244,14 @@ flowchart LR
             %% en el total global. Trabajo O(N_instancias), no O(N_txns).
             Q5Sum(["Sum Reducer"]):::counter
             q5_q(["q5_count"]):::queue
+        end
+
+        subgraph SINKS[" "]
+            direction TB
+            SinkQ1(("Q1\nUSD &lt; 50")):::sink
+            SinkQ2(("Q2\nMax/Bank")):::sink
+            SinkQ3(("Q3\nSmall Txn")):::sink
+            SinkQ4(("Q4\nScatter\nGather")):::sink
             SinkQ5(("Q5\nCount")):::sink
         end
 
@@ -262,92 +267,100 @@ flowchart LR
         Watcher(["Watcher"]):::watcher
     end
 
-    %% El cliente posee el archivo de transacciones y lo pasa al Terminal
-    TxnDS  --> UserIn
-    UserIn --> Gateway
-    %% El Currency Converter consulta la API vía HTTP y cachea localmente
-    ERDS --> Conv
+    %% ─── Entry / User ────────────────────────────────────────────
+    TxnDS  -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| UserIn
+    BanksDS -->|"«Bank Name,\nBank ID,\nAccount Number,\nEntity ID,\nEntity Name»"| UserIn
+    UserIn -->|"«transactions file + accounts file»"| Gateway
 
-    Gateway --> raw_q --> Cleaner --> txn_q
+    %% ─── Main pipeline ───────────────────────────────────────────
+    Gateway -->|"«transactions file + accounts file»"| raw_q
+    raw_q -->|"«transactions file + accounts file»"| Cleaner
+    Cleaner -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| txn_q
+    Cleaner -->|"«Bank ID,\nBank Name»"| banks_q
 
-    %% ─── Bindings del exchange transactions_clean ────────────────
-    %% Solo 2: la rama USD (compartida) y la rama Q5 (sin USD).
-    txn_q --> bind_for_usd
-    txn_q --> bind_for_q5
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_usd
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_q5
 
-    %% ─── USD Filter único + fanout usd_filtered ──────────────────
-    %% Filtra USD una vez y replica a las 6 queries que lo necesitan.
-    bind_for_usd --> USDFilt --> usd_fanout
+    bind_for_usd -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| USDFilt
+    USDFilt -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_fanout
 
-    %% ─── Bindings del exchange usd_filtered ──────────────────────
-    %% 4 destinos: Q1, Q2, Q3-P2 y la rama P1 (compartida por Q3, Q4)
-    usd_fanout --> usd_for_q1
-    usd_fanout --> usd_for_q2
-    usd_fanout --> usd_for_q3p2
-    usd_fanout --> usd_for_p1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q3p2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_p1
 
     %% ─── Q1: USD < 50 ─────────────────────────────────────────────
-    usd_for_q1 --> AmtFilt50 --> q1_q --> SinkQ1
+    usd_for_q1 -->|"«From Account,\nTo Account,\nAmount Paid»"| AmtFilt50
+    AmtFilt50 -->|"«From Account,\nTo Account,\nAmount Paid»"| q1_q
+    q1_q -->|"«From Account,\nTo Account,\nAmount Paid»"| SinkQ1
 
     %% ─── Q2: Max USD por banco ────────────────────────────────────
-    %% USDFilt publica con routing_key = hash(bank_id) % N.
-    %% El direct exchange usd_for_q2 rutea a la partition queue
-    %% correcta de MaxBank. Sin plugins, sin Router worker.
-    usd_for_q2 -->|key: bank_id| MaxBank
-    MaxBank --> q2_q --> SinkQ2
+    banks_q -->|"«Bank ID,\nBank Name»"| MaxBank
+    usd_for_q2 -->|"key: From Bank · «From Bank,\nFrom Account,\nAmount Paid»"| MaxBank
+    MaxBank -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| q2_q
+    q2_q -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| SinkQ2
 
     %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
-    usd_for_q3p2 --> P2Filt --> p2_q
-    p2_q -->|key: payment_format| JoinQ3
+    usd_for_q3p2 -->|"«From Account,\nPayment Format,\nAmount Paid»"| P2Filt
+    P2Filt -->|"«From Account,\nPayment Format,\nAmount Paid»"| p2_q
+    p2_q -->|"key: Payment Format · «From Account,\nPayment Format,\nAmount Paid»"| JoinQ3
 
-    %% ─── Period 1 Filter único: 1 input, 3 outputs ────────────────
-    %% Filtra por fecha una vez y publica 3 veces a 3 direct exchanges,
-    %% cada uno con su propia partition key.
-    usd_for_p1 --> P1Filt
-    P1Filt --> usdp1_q3
-    P1Filt --> usdp1_q4o
-    P1Filt --> usdp1_q4i
+    %% ─── Period 1 Filter único ───────────────────────────────────
+    usd_for_p1 -->|"«Timestamp,\nFrom Account,\nTo Account,\nPayment Format,\nAmount Paid»"| P1Filt
+    P1Filt -->|"«Payment Format,\nAmount Paid»"| usdp1_q3
+    P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4o
+    P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4i
 
     %% ─── Q3-P1: AvgFmt particionado por payment_format ───────────
-    usdp1_q3 -->|key: payment_format| AvgFmt
-    AvgFmt --> avg_q
-    avg_q -->|key: payment_format| JoinQ3
-    JoinQ3 --> q3c_q --> SmallFilt --> q3_q --> SinkQ3
+    usdp1_q3 -->|"key: Payment Format · «Payment Format,\nAmount Paid»"| AvgFmt
+    AvgFmt -->|"«Payment Format,\navg(Amount Paid)»"| avg_q
+    avg_q -->|"key: Payment Format · «Payment Format,\navg(Amount Paid)»"| JoinQ3
+    JoinQ3 -->|"«From Account,\nPayment Format,\nAmount Paid»"| q3c_q
+    q3c_q -->|"«From Account,\nPayment Format,\nAmount Paid»"| SmallFilt
+    SmallFilt -->|"«From Account,\nAmount Paid»"| q3_q
+    q3_q -->|"«From Account,\nAmount Paid»"| SinkQ3
 
     %% ─── Q4: scatter-gather (FanOut + FanIn) ──────────────────────
-    %% FanOut/FanIn stateful → partición por cuenta origen/destino.
-    %% Ambos aplican threshold ≥5 (scatter y gather simétricos).
-    %% SGJoin une por cuenta intermedia (la "B" del patrón A→B→C).
-    %% SGAgg cierra el patrón contando B's distintas por (A,C).
-    usdp1_q4o -->|key: from_account| FanOut
-    FanOut --> fo_q
-    fo_q -->|key: middle_account| SGJoin
+    usdp1_q4o -->|"key: From Account · «From Account,\nTo Account»"| FanOut
+    FanOut -->|"«From Account,\nTo Account»"| fo_q
+    fo_q -->|"key: From Account · «From Account,\nTo Account»"| SGJoin
 
-    usdp1_q4i -->|key: to_account| FanIn
-    FanIn --> fi_q
-    fi_q -->|key: middle_account| SGJoin
+    usdp1_q4i -->|"key: To Account · «From Account,\nTo Account»"| FanIn
+    FanIn -->|"«From Account,\nTo Account»"| fi_q
+    fi_q -->|"key: To Account · «From Account,\nTo Account»"| SGJoin
 
-    %% SGJoin emite triplas (A,B,C) ruteadas por (A,C) hacia el agregador,
-    %% que cuenta B's distintas por par y filtra los ≥5.
-    SGJoin --> sg_triples_q
-    sg_triples_q -->|key: A,C| SGAgg
-    SGAgg --> q4_q --> SinkQ4
+    SGJoin -->|"«From Account,\nMiddle Account,\nTo Account»"| sg_triples_q
+    sg_triples_q -->|"key: (From Account, To Account) · «From Account,\nMiddle Account,\nTo Account»"| SGAgg
+    SGAgg -->|"«From Account,\nTo Account»"| q4_q
+    q4_q -->|"«From Account,\nTo Account»"| SinkQ4
 
     %% ─── Q5: Wire/ACH en Period 1 con USD < 1 ────────────────────
-    %% Q5 NO usa el USD filter — opera sobre todas las monedas y
-    %% convierte después con el Currency Converter.
-    bind_for_q5 --> P1Filt_Q5 --> period1_q5 --> WAFilt --> wa_q --> Conv
-    Conv --> conv_q --> AmtFiltQ5 --> q5f_q --> CntQ5
-    %% Counters parciales → reducer único que suma todos los conteos.
-    CntQ5 --> q5_partial_q --> Q5Sum --> q5_q --> SinkQ5
+    bind_for_q5 -->|"«Timestamp,\nPayment Format,\nAmount Paid,\nPayment Currency»"| P1Filt_Q5
+    P1Filt_Q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| period1_q5
+    period1_q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| WAFilt
+    WAFilt -->|"«Amount Paid,\nPayment Currency»"| wa_q
+    wa_q -->|"«Amount Paid,\nPayment Currency»"| Conv
+    Conv -->|"«amount_usd»"| conv_q
+    conv_q -->|"«amount_usd»"| AmtFiltQ5
+    AmtFiltQ5 -->|"«amount_usd»"| q5f_q
+    q5f_q -->|"«amount_usd»"| CntQ5
+    CntQ5 -->|"«partial_count»"| q5_partial_q
+    q5_partial_q -->|"«partial_count»"| Q5Sum
+    Q5Sum -->|"«total_count»"| q5_q
+    q5_q -->|"«total_count»"| SinkQ5
 
-    SinkQ1 --> report_q
-    SinkQ2 --> report_q
-    SinkQ3 --> report_q
-    SinkQ4 --> report_q
-    SinkQ5 --> report_q
-    report_q --> GatewayOut
-    GatewayOut -.-> UserOut
+    %% ─── Sinks → report ─────────────────────────────────────────
+    SinkQ1 -->|"«From Account,\nTo Account,\nAmount Paid»"| report_q
+    SinkQ2 -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| report_q
+    SinkQ3 -->|"«From Account,\nAmount Paid»"| report_q
+    SinkQ4 -->|"«From Account,\nTo Account»"| report_q
+    SinkQ5 -->|"«total_count»"| report_q
+    report_q -->|"«Q1..Q5 results»"| GatewayOut
+    GatewayOut -.->|"«Q1..Q5 results»"| UserOut
+
+    %% API externa: cotizaciones diarias fetcheadas vía HTTP y cachea localmente
+    ERDS(["Frankfurter API"]):::extApi
+    ERDS -->|"«FX rates»"| Conv
 
     %% Q3 y Q4 tienen ahora el mismo largo después del join
     %% (5 nodos: Joiner → queue → worker → queue → sink), así que el
@@ -355,6 +368,7 @@ flowchart LR
 
     %% Subgraphs invisibles (solo agrupan para layout interno TB)
     style Q5Pipe fill:none,stroke:none
+    style SINKS fill:none,stroke:none
     </div>
   </div>
 </div>
@@ -558,8 +572,51 @@ flowchart LR
     });
   }
 
-  document.getElementById('btn-plus').addEventListener('click',  () => { scale = Math.min(scale + 0.15, 4);   applyTransform(); });
-  document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.15, 0.1); applyTransform(); });
+  // Colors arrows whose label starts with "key:" in amber to distinguish
+  // partition/routing-key edges from regular data-flow edges.
+  function colorKeyArrows() {
+    const KEY_COLOR = '#d97706';
+    const svg   = document.querySelector('#diagram-container svg');
+    if (!svg) return;
+    const paths   = [...svg.querySelectorAll('path.flowchart-link')];
+    const labels  = [...svg.querySelectorAll('.edgeLabel')];
+    const defs    = svg.querySelector('defs');
+    const created = {};
+
+    labels.forEach((lbl, i) => {
+      if (!lbl.textContent.includes('key:')) return;
+      const path = paths[i];
+      if (!path) return;
+
+      path.style.stroke      = KEY_COLOR;
+      path.style.strokeWidth = '2.5px';
+
+      if (!defs) return;
+      const markerEnd = path.getAttribute('marker-end') || '';
+      const match = markerEnd.match(/url\(["']?#([^"')]+)["']?\)/);
+      if (!match) return;
+      const origId = match[1];
+      const newId  = origId + '_key';
+      if (!created[origId]) {
+        const orig = document.getElementById(origId) || svg.querySelector('[id="' + origId + '"]');
+        if (orig) {
+          const clone = orig.cloneNode(true);
+          clone.setAttribute('id', newId);
+          clone.querySelectorAll('path, polygon, circle').forEach(el => {
+            if (el.getAttribute('fill') !== 'none') el.setAttribute('fill', KEY_COLOR);
+            if (el.getAttribute('stroke') && el.getAttribute('stroke') !== 'none')
+              el.setAttribute('stroke', KEY_COLOR);
+          });
+          defs.appendChild(clone);
+          created[origId] = true;
+        }
+      }
+      path.setAttribute('marker-end', 'url(#' + newId + ')');
+    });
+  }
+
+  document.getElementById('btn-plus').addEventListener('click',  () => { scale = Math.min(scale + 0.05, 4);   applyTransform(); });
+  document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.05, 0.1); applyTransform(); });
   document.getElementById('btn-reset').addEventListener('click', () => { scale = 1; panX = 0; panY = 0; applyTransform(); });
   document.getElementById('btn-fit').addEventListener('click',   fitDiagram);
 

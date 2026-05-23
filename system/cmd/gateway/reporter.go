@@ -1,0 +1,131 @@
+package main
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+)
+
+type queryWriter struct {
+	file          *os.File
+	csv           *csv.Writer
+	headerWritten bool
+}
+
+// reporter consumes from the reports queue and writes results to CSV files,
+// one file per (client, query) pair at {outputDir}/client_{clientID}/{queryID}_results.csv.
+//
+// It is driven by a single goroutine (the middleware callback), so no locking
+// is needed on the writers map.
+type reporter struct {
+	outputDir string
+	writers   map[string]*queryWriter // key: clientID + "/" + queryID
+}
+
+func newReporter(outputDir string) *reporter {
+	return &reporter{
+		outputDir: outputDir,
+		writers:   make(map[string]*queryWriter),
+	}
+}
+
+func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
+	key := clientID + "/" + queryID
+	if w, ok := r.writers[key]; ok {
+		return w, nil
+	}
+
+	dir := filepath.Join(r.outputDir, "client_"+clientID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create output dir %s: %w", dir, err)
+	}
+
+	path := filepath.Join(dir, queryID+"_results.csv")
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create output file %s: %w", path, err)
+	}
+
+	w := &queryWriter{file: f, csv: csv.NewWriter(f)}
+	r.writers[key] = w
+	return w, nil
+}
+
+func (r *reporter) closeWriter(clientID, queryID string) {
+	key := clientID + "/" + queryID
+	w, ok := r.writers[key]
+	if !ok {
+		return
+	}
+	w.csv.Flush()
+	if err := w.file.Close(); err != nil {
+		log.Printf("reporter: close file for client %s query %s: %v", clientID, queryID, err)
+	}
+	delete(r.writers, key)
+}
+
+func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
+	var batch protocol.Batch
+	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		log.Printf("reporter: unmarshal batch: %v — discarding", err)
+		ack()
+		return
+	}
+
+	if batch.Type == protocol.BatchTypeEOF {
+		r.closeWriter(batch.ClientID, batch.QueryID)
+		log.Printf("reporter: query %s complete for client %s", batch.QueryID, batch.ClientID)
+		ack()
+		return
+	}
+
+	w, err := r.writerFor(batch.ClientID, batch.QueryID)
+	if err != nil {
+		log.Printf("reporter: open writer for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+		nack()
+		return
+	}
+
+	if err := r.writeRows(w, batch); err != nil {
+		log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+		nack()
+		return
+	}
+
+	w.csv.Flush()
+	ack()
+}
+
+func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
+	if len(batch.Transactions) > 0 {
+		if !w.headerWritten {
+			w.csv.Write([]string{
+				"timestamp",
+				"from_bank", "from_account",
+				"to_bank", "to_account",
+				"amount_received", "receiving_currency",
+				"amount_paid", "payment_currency",
+				"payment_format",
+			})
+			w.headerWritten = true
+		}
+		for _, t := range batch.Transactions {
+			w.csv.Write([]string{
+				t.Timestamp,
+				t.FromBank, t.FromAccount,
+				t.ToBank, t.ToAccount,
+				strconv.FormatFloat(t.AmountReceived, 'f', -1, 64), t.ReceivingCurrency,
+				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64), t.PaymentCurrency,
+				t.PaymentFormat,
+			})
+		}
+	}
+	return w.csv.Error()
+}
