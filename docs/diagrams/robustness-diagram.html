@@ -273,8 +273,8 @@ flowchart LR
     UserIn -->|"«transactions file + accounts file»"| Gateway
 
     %% ─── Main pipeline ───────────────────────────────────────────
-    Gateway -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| raw_q
-    raw_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| Cleaner
+    Gateway -->|"«transactions file + accounts file»"| raw_q
+    raw_q -->|"«transactions file + accounts file»"| Cleaner
     Cleaner -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| txn_q
     Cleaner -->|"«Bank ID,\nBank Name»"| banks_q
 
