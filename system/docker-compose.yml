@@ -24,6 +24,10 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - OUTPUT_QUEUE=raw_transactions
+      - REPORTS_QUEUE=reports
+      - OUTPUT_DIR=/output
+    volumes:
+      - ../output:/output
     depends_on:
       rabbitmq:
         condition: service_healthy

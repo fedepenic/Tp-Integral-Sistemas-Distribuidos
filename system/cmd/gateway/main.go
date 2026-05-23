@@ -20,21 +20,38 @@ func envOrDefault(key, def string) string {
 }
 
 func main() {
-	port := envOrDefault("GATEWAY_PORT", "8080")
-	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
-	portStr := envOrDefault("RABBITMQ_PORT", "5672")
-	outputQueue := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
+	port         := envOrDefault("GATEWAY_PORT", "8080")
+	host         := envOrDefault("RABBITMQ_HOST", "rabbitmq")
+	portStr      := envOrDefault("RABBITMQ_PORT", "5672")
+	outputQueue  := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
+	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
+	outputDir    := envOrDefault("OUTPUT_DIR", "/output")
 
 	rabbitPort, err := strconv.Atoi(portStr)
 	if err != nil {
 		log.Fatalf("invalid RABBITMQ_PORT %q: %v", portStr, err)
 	}
 
-	producer, err := middleware.CreateQueueMiddleware(outputQueue, middleware.ConnSettings{Hostname: host, Port: rabbitPort})
+	connSettings := middleware.ConnSettings{Hostname: host, Port: rabbitPort}
+
+	producer, err := middleware.CreateQueueMiddleware(outputQueue, connSettings)
 	if err != nil {
 		log.Fatalf("connect to output queue %q: %v", outputQueue, err)
 	}
 	defer producer.Close()
+
+	reportsConsumer, err := middleware.CreateQueueMiddleware(reportsQueue, connSettings)
+	if err != nil {
+		log.Fatalf("connect to reports queue %q: %v", reportsQueue, err)
+	}
+	defer reportsConsumer.Close()
+
+	go func() {
+		r := newReporter(outputDir)
+		if err := reportsConsumer.StartConsuming(r.handle); err != nil {
+			log.Fatalf("consuming from reports queue: %v", err)
+		}
+	}()
 
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
