@@ -316,19 +316,19 @@ flowchart LR
     usdp1_q3 -->|"key: Payment Format · «Payment Format,\nAmount Paid»"| AvgFmt
     AvgFmt -->|"«Payment Format,\navg(Amount Paid)»"| avg_q
     avg_q -->|"key: Payment Format · «Payment Format,\navg(Amount Paid)»"| JoinQ3
-    JoinQ3 -->|"«From Account,\nPayment Format,\nAmount Paid»"| q3c_q
-    q3c_q -->|"«From Account,\nPayment Format,\nAmount Paid»"| SmallFilt
+    JoinQ3 -->|"«From Account,\nPayment Format,\nAmount Paid,\navg(Amount Paid)»"| q3c_q
+    q3c_q -->|"«From Account,\nPayment Format,\nAmount Paid,\navg(Amount Paid)»"| SmallFilt
     SmallFilt -->|"«From Account,\nAmount Paid»"| q3_q
     q3_q -->|"«From Account,\nAmount Paid»"| SinkQ3
 
     %% ─── Q4: scatter-gather (FanOut + FanIn) ──────────────────────
     usdp1_q4o -->|"key: From Account · «From Account,\nTo Account»"| FanOut
     FanOut -->|"«From Account,\nTo Account»"| fo_q
-    fo_q -->|"key: From Account · «From Account,\nTo Account»"| SGJoin
+    fo_q -->|"key: To Account · «From Account,\nTo Account»"| SGJoin
 
     usdp1_q4i -->|"key: To Account · «From Account,\nTo Account»"| FanIn
     FanIn -->|"«From Account,\nTo Account»"| fi_q
-    fi_q -->|"key: To Account · «From Account,\nTo Account»"| SGJoin
+    fi_q -->|"key: From Account · «From Account,\nTo Account»"| SGJoin
 
     SGJoin -->|"«From Account,\nMiddle Account,\nTo Account»"| sg_triples_q
     sg_triples_q -->|"key: (From Account, To Account) · «From Account,\nMiddle Account,\nTo Account»"| SGAgg
