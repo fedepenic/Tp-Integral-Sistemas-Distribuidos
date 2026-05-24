@@ -92,7 +92,7 @@
   <div class="controls">
     <button id="btn-fit">Ajustar</button>
     <button id="btn-minus">−</button>
-    <input id="zoom-input" type="number" value="100" min="10" max="400" step="5">%
+    <input id="zoom-input" type="number" value="45" min="10" max="400" step="5">%
     <button id="btn-plus">+</button>
     <button id="btn-reset">Reset</button>
   </div>
@@ -291,23 +291,23 @@ flowchart LR
     usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_p1
 
     %% ─── Q1: USD < 50 ─────────────────────────────────────────────
-    usd_for_q1 -->|"«From Account,\nTo Account,\nAmount Paid»"| AmtFilt50
+    usd_for_q1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| AmtFilt50
     AmtFilt50 -->|"«From Account,\nTo Account,\nAmount Paid»"| q1_q
     q1_q -->|"«From Account,\nTo Account,\nAmount Paid»"| SinkQ1
 
     %% ─── Q2: Max USD por banco ────────────────────────────────────
     banks_q -->|"«Bank ID,\nBank Name»"| MaxBank
-    usd_for_q2 -->|"key: From Bank · «From Bank,\nFrom Account,\nAmount Paid»"| MaxBank
+    usd_for_q2 -->|"key: From Bank · «Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| MaxBank
     MaxBank -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| q2_q
     q2_q -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| SinkQ2
 
     %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
-    usd_for_q3p2 -->|"«From Account,\nPayment Format,\nAmount Paid»"| P2Filt
+    usd_for_q3p2 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| P2Filt
     P2Filt -->|"«From Account,\nPayment Format,\nAmount Paid»"| p2_q
     p2_q -->|"key: Payment Format · «From Account,\nPayment Format,\nAmount Paid»"| JoinQ3
 
     %% ─── Period 1 Filter único ───────────────────────────────────
-    usd_for_p1 -->|"«Timestamp,\nFrom Account,\nTo Account,\nPayment Format,\nAmount Paid»"| P1Filt
+    usd_for_p1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| P1Filt
     P1Filt -->|"«Payment Format,\nAmount Paid»"| usdp1_q3
     P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4o
     P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4i
@@ -336,7 +336,7 @@ flowchart LR
     q4_q -->|"«From Account,\nTo Account»"| SinkQ4
 
     %% ─── Q5: Wire/ACH en Period 1 con USD < 1 ────────────────────
-    bind_for_q5 -->|"«Timestamp,\nPayment Format,\nAmount Paid,\nPayment Currency»"| P1Filt_Q5
+    bind_for_q5 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| P1Filt_Q5
     P1Filt_Q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| period1_q5
     period1_q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| WAFilt
     WAFilt -->|"«Amount Paid,\nPayment Currency»"| wa_q
@@ -392,7 +392,7 @@ flowchart LR
   const container = document.getElementById('diagram-container');
   const zoomInput = document.getElementById('zoom-input');
 
-  let scale = 1, panX = 0, panY = 0;
+  let scale = 0.45, panX = 0, panY = 0;
   let isDragging = false, startX, startY;
 
   function applyTransform() {
@@ -638,7 +638,7 @@ flowchart LR
   window.addEventListener('mouseup', () => { isDragging = false; });
 
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => { makeFileShapes(); makeHorizontalCylinders(); applyMultiShadow(); trimAllArrows(); fitDiagram(); }, 800);
+    setTimeout(() => { makeFileShapes(); makeHorizontalCylinders(); applyMultiShadow(); trimAllArrows(); applyTransform(); }, 800);
   });
 </script>
 </body>
