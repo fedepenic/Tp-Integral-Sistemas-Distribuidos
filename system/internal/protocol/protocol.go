@@ -28,6 +28,7 @@ type Transaction struct {
 	PaymentCurrency   string  `json:"payment_currency"`
 	PaymentFormat     string  `json:"payment_format"`
 	IsLaundering      int     `json:"is_laundering"`
+	AvgForFormat      float64 `json:"avg_for_format,omitempty"`
 }
 
 type Account struct {

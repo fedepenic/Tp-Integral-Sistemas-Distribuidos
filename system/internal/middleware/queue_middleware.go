@@ -95,6 +95,15 @@ func (qm *QueueMiddleware) StopConsuming() error {
 }
 
 func (qm *QueueMiddleware) Send(msg Message) error {
+	return qm.publish(msg)
+}
+
+// SendWithKey ignora la key — una queue simple siempre publica a su nombre fijo.
+func (qm *QueueMiddleware) SendWithKey(msg Message, _ string) error {
+	return qm.publish(msg)
+}
+
+func (qm *QueueMiddleware) publish(msg Message) error {
 	if err := qm.ch.PublishWithContext(
 		context.Background(),
 		"",
