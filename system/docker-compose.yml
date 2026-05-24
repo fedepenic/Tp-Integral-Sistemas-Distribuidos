@@ -1,5 +1,197 @@
 services:
+  rabbitmq:
+    build:
+      context: .
+      dockerfile: cmd/rabbitmq/Dockerfile
+    environment:
+      - RABBITMQ_LOG_LEVELS=error
+    ports:
+      - 5672:5672
+      - 15672:15672
+    healthcheck:
+      test: rabbitmq-diagnostics check_port_connectivity
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 50s
 
+  gateway:
+    build:
+      context: .
+      dockerfile: cmd/gateway/Dockerfile
+    environment:
+      - GATEWAY_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - OUTPUT_QUEUE=raw_transactions
+      - REPORTS_QUEUE=reports
+      - OUTPUT_DIR=/output
+    volumes:
+      - ../output:/output
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  client_1:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      - INPUT_DIR=/data/client_1
+      - BATCH_SIZE=100
+    volumes:
+      - ../input:/data
+    depends_on:
+      - gateway
+
+  client_2:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      - INPUT_DIR=/data/client_2
+      - BATCH_SIZE=100
+    volumes:
+      - ../input:/data
+    depends_on:
+      - gateway
+
+  cleaner_1:
+    build:
+      context: .
+      dockerfile: cmd/cleaner/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - INPUT_QUEUE=raw_transactions
+      - OUTPUT_EXCHANGE=transactions_clean
+      - OUTPUT_KEYS=txn_for_usd,txn_for_q5
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - EOF_EXCHANGE=cleaner_eof
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  filter_1:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_1:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_2:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_3:
+    build:
+      context: .
+      dockerfile: cmd/joiner/Dockerfile
+    environment:
+      - INSTANCE_ID=3
+      - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  counter_1:
+    build:
+      context: .
+      dockerfile: cmd/counter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  counter_2:
+    build:
+      context: .
+      dockerfile: cmd/counter/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  currency_converter_1:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  currency_converter_2:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  sink_q1:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=q1
+      - INPUT_QUEUE=q1_results
+      - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      
   usd_filter:
     build:
       context: .
@@ -141,4 +333,5 @@ services:
       - EOF_INPUT_KEY=usd1_filter
       - EOF_OUTPUT_EXCHANGE=eof_q5_filtered
 
+ 
  
