@@ -361,7 +361,7 @@ flowchart LR
 
     %% API externa: cotizaciones diarias fetcheadas vía HTTP y cachea localmente
     ERDS(["Frankfurter API"]):::extApi
-    ERDS -->|"«FX rates»"| Conv
+    ERDS -->|"«currency rates»"| Conv
 
     %% Q3 y Q4 tienen ahora el mismo largo después del join
     %% (5 nodos: Joiner → queue → worker → queue → sink), así que el
