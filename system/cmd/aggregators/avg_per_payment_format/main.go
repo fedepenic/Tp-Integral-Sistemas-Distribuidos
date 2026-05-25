@@ -12,12 +12,18 @@ import (
 )
 
 func main() {
+	outputQueue, outputExchange, outputKey := outputConfig()
+	outputKeyPrefix, outputPartitions := outputRoutingConfig()
 	cfg := worker.AggregatorConfig{
 		InstanceID:        mustEnvInt("INSTANCE_ID"),
 		ConnSettings:      connSettings(),
 		InputExchange:     mustEnv("INPUT_EXCHANGE"),
 		InputKey:          mustEnv("INPUT_KEY"),
-		OutputQueue:       mustEnv("OUTPUT_QUEUE"),
+		OutputQueue:       outputQueue,
+		OutputExchange:    outputExchange,
+		OutputKey:         outputKey,
+		OutputKeyPrefix:   outputKeyPrefix,
+		OutputPartitions:  outputPartitions,
 		ControlExchange:   mustEnv("EOF_CONTROL_EXCHANGE"),
 		ControlKey:        mustEnv("EOF_CONTROL_KEY"),
 		UpstreamInstances: mustEnvInt("UPSTREAM_INSTANCES"),
@@ -30,12 +36,16 @@ func main() {
 		return batch.Transactions, true
 	}
 
+	resultKey := func(res aggregators.AvgPerPaymentFormatResult) string {
+		return res.PaymentFormat
+	}
+
 	workerInstance, err := worker.NewAggregatorWorker[
 		protocol.Transaction,
 		string,
 		aggregators.AvgPerPaymentFormatState,
 		aggregators.AvgPerPaymentFormatResult,
-	](cfg, extractor, aggregators.AvgPerPaymentFormatLogic{})
+	](cfg, extractor, aggregators.AvgPerPaymentFormatLogic{}, resultKey)
 	if err != nil {
 		log.Fatalf("[avg_per_payment_format] init error: %v", err)
 	}
@@ -67,4 +77,18 @@ func connSettings() middleware.ConnSettings {
 		Hostname: mustEnv("RABBITMQ_HOST"),
 		Port:     mustEnvInt("RABBITMQ_PORT"),
 	}
+}
+
+func outputConfig() (string, string, string) {
+	queue := os.Getenv("OUTPUT_QUEUE")
+	exchange := os.Getenv("OUTPUT_EXCHANGE")
+	key := os.Getenv("OUTPUT_KEY")
+	if queue == "" && exchange == "" {
+		log.Fatalf("[avg_per_payment_format] env var OUTPUT_QUEUE or OUTPUT_EXCHANGE is required")
+	}
+	return queue, exchange, key
+}
+
+func outputRoutingConfig() (string, int) {
+	return mustEnv("OUTPUT_KEY_PREFIX"), mustEnvInt("OUTPUT_PARTITIONS")
 }

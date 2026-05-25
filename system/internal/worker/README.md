@@ -17,10 +17,19 @@ and emits `ResultBatch` messages to an output queue.
 - `ConnSettings` (RabbitMQ host/port)
 - `InputExchange` (direct exchange for partitioned input)
 - `InputKey` (routing key for this instance)
-- `OutputQueue`
+- `OutputQueue` (or `OutputExchange`)
 - `ControlExchange`
 - `ControlKey`
 - `UpstreamInstances` (expected EOFs per client/task)
+
+### Optional output routing
+
+- `OutputExchange` enables publishing to a direct exchange instead of a queue.
+- `OutputKey` is the fixed routing key used when sending EOFs or when the
+  aggregator does not provide a result routing function.
+- When a `ResultKeyFunc` is provided, results are grouped by key and published
+  with `SendWithKey` for each group. If the output is a queue, the key is
+  ignored but batches remain separated per key, mirroring `filter-worker`.
 
 ### Routing notes
 

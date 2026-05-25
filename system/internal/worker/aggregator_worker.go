@@ -14,6 +14,7 @@ type AggregatorWorker[T any, K comparable, S any, O any] struct {
 	cfg       AggregatorConfig
 	extractor BatchExtractor[T]
 	logic     AggregatorLogic[T, K, S, O]
+	resultKey ResultKeyFunc[O]
 
 	input      middleware.Middleware
 	output     middleware.Middleware
@@ -27,6 +28,7 @@ func NewAggregatorWorker[T any, K comparable, S any, O any](
 	cfg AggregatorConfig,
 	extractor BatchExtractor[T],
 	logic AggregatorLogic[T, K, S, O],
+	resultKey ResultKeyFunc[O],
 ) (*AggregatorWorker[T, K, S, O], error) {
 	if cfg.UpstreamInstances < 1 {
 		return nil, fmt.Errorf("upstream instances must be >= 1")
@@ -37,12 +39,31 @@ func NewAggregatorWorker[T any, K comparable, S any, O any](
 	if cfg.InputKey == "" {
 		return nil, fmt.Errorf("input key is required")
 	}
+	if cfg.OutputExchange == "" && cfg.OutputQueue == "" {
+		return nil, fmt.Errorf("output queue or exchange is required")
+	}
+	if resultKey != nil {
+		if cfg.OutputExchange == "" {
+			return nil, fmt.Errorf("output exchange is required for partitioned output")
+		}
+		if cfg.OutputPartitions < 1 {
+			return nil, fmt.Errorf("output partitions must be >= 1")
+		}
+		if cfg.OutputKeyPrefix == "" {
+			return nil, fmt.Errorf("output key prefix is required for partitioned output")
+		}
+	}
 	input, err := middleware.NewExchangeMiddleware(cfg.InputExchange, []string{cfg.InputKey}, cfg.ConnSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	output, err := middleware.NewQueueMiddleware(cfg.OutputQueue, cfg.ConnSettings)
+	var output middleware.Middleware
+	if cfg.OutputExchange != "" {
+		output, err = middleware.NewExchangeMiddleware(cfg.OutputExchange, []string{cfg.OutputKey}, cfg.ConnSettings)
+	} else {
+		output, err = middleware.NewQueueMiddleware(cfg.OutputQueue, cfg.ConnSettings)
+	}
 	if err != nil {
 		_ = input.Close()
 		return nil, err
@@ -67,6 +88,7 @@ func NewAggregatorWorker[T any, K comparable, S any, O any](
 		cfg:        cfg,
 		extractor:  extractor,
 		logic:      logic,
+		resultKey:  resultKey,
 		input:      input,
 		output:     output,
 		controlPub: controlPub,
@@ -302,13 +324,12 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 		results = append(results, w.logic.Finalize(key, value)...)
 	}
 
-	resultBatch := ResultBatch[O]{Type: ResultTypeData, ClientID: clientID, Records: results}
-	if err := w.sendResultBatch(resultBatch); err != nil {
+	partitions, err := w.sendResults(clientID, results)
+	if err != nil {
 		return err
 	}
 
-	eofBatch := ResultBatch[O]{Type: ResultTypeEOF, ClientID: clientID}
-	if err := w.sendResultBatch(eofBatch); err != nil {
+	if err := w.sendEOF(partitions, clientID); err != nil {
 		return err
 	}
 
@@ -318,12 +339,54 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	return nil
 }
 
-func (w *AggregatorWorker[T, K, S, O]) sendResultBatch(batch ResultBatch[O]) error {
+func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O) (map[int]struct{}, error) {
+	if w.resultKey == nil {
+		resultBatch := ResultBatch[O]{Type: ResultTypeData, ClientID: clientID, Records: results}
+		return nil, w.sendResultBatch(resultBatch, "")
+	}
+
+	groups := make(map[string][]O)
+	for _, result := range results {
+		key := w.resultKey(result)
+		groups[key] = append(groups[key], result)
+	}
+	partitions := make(map[int]struct{}, len(groups))
+	for key, group := range groups {
+		partition := PartitionForKey(key, w.cfg.OutputPartitions)
+		partitions[partition] = struct{}{}
+		routingKey := RoutingKey(w.cfg.OutputKeyPrefix, partition)
+		resultBatch := ResultBatch[O]{Type: ResultTypeData, ClientID: clientID, Records: group}
+		if err := w.sendResultBatch(resultBatch, routingKey); err != nil {
+			return nil, err
+		}
+	}
+	return partitions, nil
+}
+
+func (w *AggregatorWorker[T, K, S, O]) sendEOF(partitions map[int]struct{}, clientID string) error {
+	batch := ResultBatch[O]{Type: ResultTypeEOF, ClientID: clientID}
+	if len(partitions) == 0 {
+		return w.sendResultBatch(batch, "")
+	}
+	for partition := range partitions {
+		routingKey := RoutingKey(w.cfg.OutputKeyPrefix, partition)
+		if err := w.sendResultBatch(batch, routingKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *AggregatorWorker[T, K, S, O]) sendResultBatch(batch ResultBatch[O], key string) error {
 	data, err := json.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
-	return w.output.Send(middleware.Message{Body: string(data)})
+	msg := middleware.Message{Body: string(data)}
+	if key == "" {
+		return w.output.Send(msg)
+	}
+	return w.output.SendWithKey(msg, key)
 }
 
 func (w *AggregatorWorker[T, K, S, O]) getOrCreateTaskLocked(clientID string) *taskState[K, S] {

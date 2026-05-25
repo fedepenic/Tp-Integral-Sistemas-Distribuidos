@@ -12,12 +12,15 @@ import (
 )
 
 func main() {
+	outputQueue, outputExchange, outputKey := outputConfig()
 	cfg := worker.AggregatorConfig{
 		InstanceID:        mustEnvInt("INSTANCE_ID"),
 		ConnSettings:      connSettings(),
 		InputExchange:     mustEnv("INPUT_EXCHANGE"),
 		InputKey:          mustEnv("INPUT_KEY"),
-		OutputQueue:       mustEnv("OUTPUT_QUEUE"),
+		OutputQueue:       outputQueue,
+		OutputExchange:    outputExchange,
+		OutputKey:         outputKey,
 		ControlExchange:   mustEnv("EOF_CONTROL_EXCHANGE"),
 		ControlKey:        mustEnv("EOF_CONTROL_KEY"),
 		UpstreamInstances: mustEnvInt("UPSTREAM_INSTANCES"),
@@ -35,7 +38,7 @@ func main() {
 		string,
 		aggregators.ScatterGatherState,
 		aggregators.ScatterGatherResult,
-	](cfg, extractor, aggregators.ScatterGatherLogic{})
+	](cfg, extractor, aggregators.ScatterGatherLogic{}, nil)
 	if err != nil {
 		log.Fatalf("[scatter_gather] init error: %v", err)
 	}
@@ -67,4 +70,14 @@ func connSettings() middleware.ConnSettings {
 		Hostname: mustEnv("RABBITMQ_HOST"),
 		Port:     mustEnvInt("RABBITMQ_PORT"),
 	}
+}
+
+func outputConfig() (string, string, string) {
+	queue := os.Getenv("OUTPUT_QUEUE")
+	exchange := os.Getenv("OUTPUT_EXCHANGE")
+	key := os.Getenv("OUTPUT_KEY")
+	if queue == "" && exchange == "" {
+		log.Fatalf("[scatter_gather] env var OUTPUT_QUEUE or OUTPUT_EXCHANGE is required")
+	}
+	return queue, exchange, key
 }
