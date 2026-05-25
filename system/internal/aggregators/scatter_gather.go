@@ -1,15 +1,10 @@
 package aggregators
 
+import "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+
 const scatterThreshold = 5
 
-type ScatterGatherItem struct {
-	FromBank      string
-	FromAccount   string
-	MiddleBank    string
-	MiddleAccount string
-	ToBank        string
-	ToAccount     string
-}
+type ScatterGatherItem = protocol.ScatterGatherItem
 
 type ScatterGatherState struct {
 	Middles map[string]struct{}
