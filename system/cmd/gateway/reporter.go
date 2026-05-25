@@ -47,7 +47,7 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 		return nil, fmt.Errorf("create output dir %s: %w", dir, err)
 	}
 
-	path := filepath.Join(dir, queryID+"_results.csv")
+	path := filepath.Join(dir, "query_"+queryID+".csv")
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("create output file %s: %w", path, err)
