@@ -1,3 +1,5 @@
+all: build clean-output generate-compose generate-inputs run-notebook run-system
+
 all-notebook: build clean-output generate-inputs run-notebook
 
 all-system: build clean-output generate-compose generate-inputs run-system
@@ -10,7 +12,7 @@ clean-output:
 compare:
 	docker run --rm \
 		-v $(PWD)/output:/app/output \
-		money-laundering python scripts/compare_outputs.py
+		money-laundering python scripts/compare_outputs.py $(word 2,$(MAKECMDGOALS))
 
 build:
 	docker build -t money-laundering .
@@ -46,3 +48,7 @@ stop-system:
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
+
+.PHONY: 1 2 3 4 5
+1 2 3 4 5:
+	@:

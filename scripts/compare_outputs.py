@@ -6,6 +6,10 @@ base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 notebook_dir = os.path.join(base_dir, "output", "notebook")
 system_dir = os.path.join(base_dir, "output", "system")
 
+query_filter = None
+if len(sys.argv) > 1:
+    query_filter = f"query_{sys.argv[1]}.csv"
+
 if not os.path.exists(notebook_dir):
     print("ERROR: output/notebook/ not found. Run 'make run' first.")
     sys.exit(1)
@@ -27,6 +31,9 @@ for client in sorted(os.scandir(notebook_dir), key=lambda e: e.name):
         continue
 
     for query_file in sorted(os.listdir(client.path)):
+        if query_filter and query_file != query_filter:
+            continue
+
         nb_path = os.path.join(client.path, query_file)
         sys_path = os.path.join(sys_client_dir, query_file)
 

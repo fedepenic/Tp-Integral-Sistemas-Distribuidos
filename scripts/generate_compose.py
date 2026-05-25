@@ -10,7 +10,7 @@ GATEWAY_PORT = 8080
 # Each sink is always a single instance with a single upstream aggregator.
 # (query_id, input_queue)
 SINKS = [
-    ("q1", "q1_data"),
+    ("1", "q1_data"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
