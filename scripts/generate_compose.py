@@ -10,14 +10,15 @@ GATEWAY_PORT = 8080
 # Each sink is always a single instance with a single upstream aggregator.
 # (query_id, input_queue)
 SINKS = [
-    ("q1", "q1_results"),
+    ("q1", "q1_data"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
 # upstream_count_env_var=None means UPSTREAM_INSTANCES is always 1.
 NAMED_FILTERS = [
     ("usd_filter", "usd_filter", "N_USD_FILTER", "N_CLEANERS", {
-        "INPUT_QUEUE":            "txn_for_usd",
+        "INPUT_EXCHANGE":         "transactions_clean",
+        "INPUT_KEY":              "txn_for_usd",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
         "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
         "EOF_INPUT_EXCHANGE":     "eof_cleaner",
@@ -26,7 +27,7 @@ NAMED_FILTERS = [
         "EOF_DIRECT_EXCHANGE":    "eof_usd_for_q2",
     }),
     ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", None, {
-        "INPUT_QUEUE":         "usd_for_q1",
+        "INPUT_EXCHANGE":      "usd_filtered",
         "OUTPUT_QUEUE":        "q1_data",
         "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
         "EOF_INPUT_KEY":       "amt50_filter",
@@ -58,7 +59,8 @@ NAMED_FILTERS = [
         "EOF_OUTPUT_EXCHANGE": "eof_q3_data",
     }),
     ("period1_q5_filter", "period1_q5_filter", "N_PERIOD1_Q5_FILTER", "N_CLEANERS", {
-        "INPUT_QUEUE":         "txn_for_q5",
+        "INPUT_EXCHANGE":      "transactions_clean",
+        "INPUT_KEY":           "txn_for_q5",
         "OUTPUT_QUEUE":        "period1_for_q5",
         "EOF_INPUT_EXCHANGE":  "eof_cleaner",
         "EOF_INPUT_KEY":       "period1_q5_filter",
@@ -71,11 +73,11 @@ NAMED_FILTERS = [
         "EOF_INPUT_KEY":       "wireach_filter",
         "EOF_OUTPUT_EXCHANGE": "eof_wireach_txn",
     }),
-    ("usd1_filter", "lower_than_1_filter", "N_USD1_FILTER", None, {
+    ("usd_lower_than_one", "lower_than_1_filter", "N_USD_LOWER_THAN_ONE", None, {
         "INPUT_QUEUE":         "converted_usd",
         "OUTPUT_QUEUE":        "q5_filtered",
         "EOF_INPUT_EXCHANGE":  "eof_converted_usd",
-        "EOF_INPUT_KEY":       "usd1_filter",
+        "EOF_INPUT_KEY":       "usd_lower_than_one",
         "EOF_OUTPUT_EXCHANGE": "eof_q5_filtered",
     }),
 ]

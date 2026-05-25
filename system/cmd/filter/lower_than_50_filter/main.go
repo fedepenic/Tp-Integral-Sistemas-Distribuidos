@@ -9,7 +9,7 @@ import (
 // Amount < 50 Filter
 //
 // Entrada:
-//   - Queue: usd_for_q1
+//   - Exchange: usd_filtered (fanout from usd_filter)
 //
 // Condición: AmountPaid < 50
 //
@@ -22,7 +22,7 @@ import (
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE         — cola de entrada (usd_for_q1)
+//   INPUT_EXCHANGE      — exchange de entrada (usd_filtered)
 //   OUTPUT_QUEUE        — cola de salida  (q1_data)
 //   EOF_INPUT_EXCHANGE  — exchange EOF de entrada (eof_usd_filtered)
 //   EOF_INPUT_KEY       — routing key propia       (amt50_filter)
@@ -31,7 +31,7 @@ import (
 func main() {
 	conn := config.ConnSettings()
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.Exchange("INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)

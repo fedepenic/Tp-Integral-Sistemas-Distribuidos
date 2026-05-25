@@ -39,7 +39,7 @@ run-notebook:
 		money-laundering python scripts/run_analysis.py
 
 run-system:
-	docker-compose -f system/docker-compose.yml up --build
+	docker-compose -f system/docker-compose.yml up --build --remove-orphans
 
 stop-system:
 	docker-compose -f system/docker-compose.yml down

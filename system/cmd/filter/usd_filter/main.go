@@ -9,7 +9,7 @@ import (
 // USD Filter
 //
 // Entrada:
-//   - Queue: txn_for_usd
+//   - Exchange: transactions_clean, key: txn_for_usd
 //
 // Condición: PaymentCurrency == "US Dollar"
 //
@@ -26,7 +26,8 @@ import (
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE            — cola de entrada (txn_for_usd)
+//   INPUT_EXCHANGE         — exchange de entrada (transactions_clean)
+//   INPUT_KEY              — routing key propia (txn_for_usd)
 //   OUTPUT_FANOUT_EXCHANGE — exchange fanout de salida (usd_filtered)
 //   OUTPUT_DIRECT_EXCHANGE — exchange direct de salida (usd_for_q2)
 //   EOF_INPUT_EXCHANGE     — exchange EOF de entrada (eof_cleaner)
@@ -37,7 +38,7 @@ import (
 func main() {
 	conn := config.ConnSettings()
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	fanoutMW := config.Exchange("OUTPUT_FANOUT_EXCHANGE", []string{""}, conn)

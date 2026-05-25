@@ -14,7 +14,7 @@ import (
 // que recibe todas las transacciones (no solo USD) desde el cleaner.
 //
 // Entrada:
-//   - Queue: txn_for_q5
+//   - Exchange: transactions_clean, key: txn_for_q5
 //
 // Condición: Timestamp en [2022-09-01, 2022-09-05]
 //
@@ -27,7 +27,8 @@ import (
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE         — cola de entrada (txn_for_q5)
+//   INPUT_EXCHANGE      — exchange de entrada (transactions_clean)
+//   INPUT_KEY           — routing key propia (txn_for_q5)
 //   OUTPUT_QUEUE        — cola de salida  (period1_for_q5)
 //   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_cleaner)
 //   EOF_INPUT_KEY       — routing key propia   (period1_q5_filter)
@@ -42,7 +43,7 @@ func main() {
 	end, _ := time.Parse(dateLayout, "2022-09-05")
 	end = end.Add(24 * time.Hour)
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
