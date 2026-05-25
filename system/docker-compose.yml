@@ -21,6 +21,13 @@ services:
       dockerfile: cmd/gateway/Dockerfile
     environment:
       - GATEWAY_PORT=8080
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - OUTPUT_QUEUE=raw_transactions
+      - REPORTS_QUEUE=reports
+      - OUTPUT_DIR=/output
+    volumes:
+      - ../output:/output
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -57,6 +64,23 @@ services:
     depends_on:
       - gateway
 
+  cleaner_1:
+    build:
+      context: .
+      dockerfile: cmd/cleaner/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - INPUT_QUEUE=raw_transactions
+      - OUTPUT_EXCHANGE=transactions_clean
+      - OUTPUT_KEYS=txn_for_usd,txn_for_q5
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - EOF_EXCHANGE=cleaner_eof
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   filter_1:
     build:
       context: .
@@ -64,6 +88,9 @@ services:
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   joiner_1:
     build:
@@ -72,6 +99,9 @@ services:
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   joiner_2:
     build:
@@ -80,6 +110,9 @@ services:
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   joiner_3:
     build:
@@ -88,6 +121,9 @@ services:
     environment:
       - INSTANCE_ID=3
       - INSTANCE_TOTAL=3
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   counter_1:
     build:
@@ -96,6 +132,9 @@ services:
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   counter_2:
     build:
@@ -104,4 +143,195 @@ services:
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
+  currency_converter_1:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  currency_converter_2:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  sink_q1:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=q1
+      - INPUT_QUEUE=q1_results
+      - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      
+  usd_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: usd_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=txn_for_usd
+      - OUTPUT_FANOUT_EXCHANGE=usd_filtered
+      - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
+      - EOF_INPUT_EXCHANGE=eof_cleaner
+      - EOF_INPUT_KEY=usd_filter
+      - EOF_FANOUT_EXCHANGE=eof_usd_filtered
+      - EOF_DIRECT_EXCHANGE=eof_usd_for_q2
+
+ 
+  amt50_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: lower_than_50_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=usd_for_q1
+      - OUTPUT_QUEUE=q1_data
+      - EOF_INPUT_EXCHANGE=eof_usd_filtered
+      - EOF_INPUT_KEY=amt50_filter
+      - EOF_OUTPUT_EXCHANGE=eof_q1_data
+
+ 
+  period2_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: period2_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=usd_for_q3p2
+      - OUTPUT_QUEUE=usd_period2
+      - EOF_INPUT_EXCHANGE=eof_usd_filtered
+      - EOF_INPUT_KEY=period2_filter
+      - EOF_OUTPUT_EXCHANGE=eof_usd_period2
+
+
+  period1_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: period1_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=usd_for_p1
+      - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
+      - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
+      - EOF_INPUT_EXCHANGE=eof_usd_filtered
+      - EOF_INPUT_KEY=period1_filter
+      - EOF_Q3_EXCHANGE=eof_usd_period1_for_q3
+      - EOF_Q4_FO_EXCHANGE=eof_usd_period1_for_q4_fo
+      - EOF_Q4_FI_EXCHANGE=eof_usd_period1_for_q4_fi
+
+ 
+  amt_avg_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: lower_than_avg_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=q3_candidates
+      - OUTPUT_QUEUE=q3_data
+      - EOF_INPUT_EXCHANGE=eof_q3_candidates
+      - EOF_INPUT_KEY=amt_avg_filter
+      - EOF_OUTPUT_EXCHANGE=eof_q3_data
+
+ 
+  period1_q5_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: period1_q5_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=txn_for_q5
+      - OUTPUT_QUEUE=period1_for_q5
+      - EOF_INPUT_EXCHANGE=eof_cleaner
+      - EOF_INPUT_KEY=period1_q5_filter
+      - EOF_OUTPUT_EXCHANGE=eof_period1_for_q5
+
+ 
+  wireach_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: wire_ach_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=period1_for_q5
+      - OUTPUT_QUEUE=wireach_txn
+      - EOF_INPUT_EXCHANGE=eof_period1_for_q5
+      - EOF_INPUT_KEY=wireach_filter
+      - EOF_OUTPUT_EXCHANGE=eof_wireach_txn
+
+ 
+  usd1_filter:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: lower_than_1_filter
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE=converted_usd
+      - OUTPUT_QUEUE=q5_filtered
+      - EOF_INPUT_EXCHANGE=eof_converted_usd
+      - EOF_INPUT_KEY=usd1_filter
+      - EOF_OUTPUT_EXCHANGE=eof_q5_filtered
+
+ 
+ 

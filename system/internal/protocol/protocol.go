@@ -29,6 +29,7 @@ type Transaction struct {
 	PaymentCurrency   string  `json:"payment_currency"`
 	PaymentFormat     string  `json:"payment_format"`
 	IsLaundering      int     `json:"is_laundering"`
+	AvgForFormat      float64 `json:"avg_for_format,omitempty"`
 }
 
 type Account struct {
@@ -51,6 +52,7 @@ type ScatterGatherItem struct {
 type Batch struct {
 	Type               BatchType           `json:"type"`
 	ClientID           string              `json:"client_id,omitempty"`
+	QueryID            string              `json:"query_id,omitempty"`
 	Transactions       []Transaction       `json:"transactions,omitempty"`
 	Accounts           []Account           `json:"accounts,omitempty"`
 	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`

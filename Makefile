@@ -1,6 +1,11 @@
-all-notebook: build generate-inputs run-notebook
+all-notebook: build clean-output generate-inputs run-notebook
 
-all-system: build generate-compose generate-inputs run-system
+all-system: build clean-output generate-compose generate-inputs run-system
+
+clean-output:
+	docker run --rm \
+		-v $(PWD)/output:/app/output \
+		money-laundering python scripts/clean_output.py
 
 compare:
 	docker run --rm \
@@ -14,6 +19,7 @@ generate-compose:
 	docker run --rm \
 		--env-file .env \
 		-v $(PWD)/system:/app/system \
+		-v $(PWD)/scripts:/app/scripts \
 		money-laundering python scripts/generate_compose.py
 
 generate-inputs:
