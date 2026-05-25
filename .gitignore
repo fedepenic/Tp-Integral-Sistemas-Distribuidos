@@ -2,4 +2,3 @@ data/
 input/
 output/
 .DS_Store
-.env
