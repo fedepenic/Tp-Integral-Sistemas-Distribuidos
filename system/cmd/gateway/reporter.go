@@ -107,23 +107,21 @@ func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 	if len(batch.Transactions) > 0 {
 		if !w.headerWritten {
 			w.csv.Write([]string{
-				"timestamp",
-				"from_bank", "from_account",
-				"to_bank", "to_account",
-				"amount_received", "receiving_currency",
-				"amount_paid", "payment_currency",
-				"payment_format",
+				"From Bank",
+				"Account",
+				"To Bank",
+				"Account.1",
+				"Amount Paid",
 			})
 			w.headerWritten = true
 		}
 		for _, t := range batch.Transactions {
 			w.csv.Write([]string{
-				t.Timestamp,
-				t.FromBank, t.FromAccount,
-				t.ToBank, t.ToAccount,
-				strconv.FormatFloat(t.AmountReceived, 'f', -1, 64), t.ReceivingCurrency,
-				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64), t.PaymentCurrency,
-				t.PaymentFormat,
+				t.FromBank,
+				t.FromAccount,
+				t.ToBank,
+				t.ToAccount,
+				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
 			})
 		}
 	}
