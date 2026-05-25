@@ -91,8 +91,6 @@ SERVICES = [
         "RABBITMQ_PORT":    "5672",
         "EOF_EXCHANGE":     "cleaner_eof",
     }),
-    ("joiner",             "cmd/joiner/Dockerfile",             "N_JOINERS",             {}),
-    ("counter",            "cmd/counter/Dockerfile",            "N_COUNTERS",            {}),
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
         "INPUT_QUEUE":  "wireach_txn",
         "OUTPUT_QUEUE": "converted_usd",
