@@ -19,6 +19,7 @@ import (
 type node struct {
 	producer     middleware.Middleware
 	eofBroadcast middleware.Middleware
+	eofProducer  middleware.Middleware
 	mu           sync.Mutex
 	cond         *sync.Cond
 	// globalPending counts messages dequeued but not yet deserialized (clientID unknown).
@@ -27,10 +28,11 @@ type node struct {
 	clientPending map[string]int
 }
 
-func newNode(producer, eofBroadcast middleware.Middleware) *node {
+func newNode(producer, eofBroadcast, eofProducer middleware.Middleware) *node {
 	n := &node{
 		producer:      producer,
 		eofBroadcast:  eofBroadcast,
+		eofProducer:   eofProducer,
 		clientPending: make(map[string]int),
 	}
 	n.cond = sync.NewCond(&n.mu)
@@ -185,8 +187,8 @@ func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 	}
 	n.mu.Unlock()
 
-	if err := n.producer.Send(msg); err != nil {
-		log.Printf("send EOF to output exchange: %v", err)
+	if err := n.eofProducer.Send(msg); err != nil {
+		log.Printf("send EOF to downstream EOF exchange: %v", err)
 		nack()
 		return
 	}
@@ -201,14 +203,16 @@ func envOrDefault(key, def string) string {
 }
 
 func main() {
-	inputQueue     := envOrDefault("INPUT_QUEUE", "raw_transactions")
-	outputExchange := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
-	outputKeys     := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
-	host           := envOrDefault("RABBITMQ_HOST", "rabbitmq")
-	portStr := envOrDefault("RABBITMQ_PORT", "5672")
-	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
+	inputQueue       := envOrDefault("INPUT_QUEUE", "raw_transactions")
+	outputExchange   := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
+	outputKeys       := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
+	eofOutputExchange := envOrDefault("EOF_OUTPUT_EXCHANGE", "eof_cleaner")
+	eofOutputKeys    := strings.Split(envOrDefault("EOF_OUTPUT_KEYS", "usd_filter,period1_q5_filter"), ",")
+	host             := envOrDefault("RABBITMQ_HOST", "rabbitmq")
+	portStr          := envOrDefault("RABBITMQ_PORT", "5672")
+	instanceIDStr    := envOrDefault("INSTANCE_ID", "1")
 	instanceTotalStr := envOrDefault("INSTANCE_TOTAL", "1")
-	eofExchange := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
+	eofExchange      := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -257,7 +261,15 @@ func main() {
 	}
 	defer eofReceiver.Close()
 
-	n := newNode(producer, eofBroadcast)
+	// eofProducer sends the EOF downstream to the filter nodes once all
+	// in-flight data for a client has been flushed.
+	eofProducer, err := middleware.CreateExchangeMiddleware(eofOutputExchange, eofOutputKeys, connSettings)
+	if err != nil {
+		log.Fatalf("connect to downstream EOF exchange: %v", err)
+	}
+	defer eofProducer.Close()
+
+	n := newNode(producer, eofBroadcast, eofProducer)
 
 	log.Printf("cleaner %d/%d started: %s -> %s%v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
 

@@ -7,10 +7,10 @@ COMPOSE_OUT = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 
 GATEWAY_PORT = 8080
 
-# Each sink is always a single instance with a single upstream aggregator.
-# (query_id, input_queue)
+# Each sink is always a single instance.
+# (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
-    ("1", "q1_data"),
+    ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -84,12 +84,14 @@ NAMED_FILTERS = [
 
 SERVICES = [
     ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
-        "INPUT_QUEUE":      "raw_transactions",
-        "OUTPUT_EXCHANGE":  "transactions_clean",
-        "OUTPUT_KEYS":      "txn_for_usd,txn_for_q5",
-        "RABBITMQ_HOST":    "rabbitmq",
-        "RABBITMQ_PORT":    "5672",
-        "EOF_EXCHANGE":     "cleaner_eof",
+        "INPUT_QUEUE":        "raw_transactions",
+        "OUTPUT_EXCHANGE":    "transactions_clean",
+        "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
+        "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
+        "EOF_OUTPUT_KEYS":    "usd_filter,period1_q5_filter",
+        "RABBITMQ_HOST":      "rabbitmq",
+        "RABBITMQ_PORT":      "5672",
+        "EOF_EXCHANGE":       "cleaner_eof",
     }),
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
         "INPUT_QUEUE":  "wireach_txn",
@@ -179,7 +181,8 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append("")
 
     # Sinks — always single-instance, one per query
-    for query_id, input_queue in SINKS:
+    for query_id, input_queue, eof_exchange, upstream_env_var in SINKS:
+        upstream = int(env.get(upstream_env_var, 1))
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
@@ -187,8 +190,9 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"    environment:")
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
+        lines.append(f"      - EOF_INPUT_EXCHANGE={eof_exchange}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
-        lines.append(f"      - UPSTREAM_TOTAL=1")
+        lines.append(f"      - UPSTREAM_TOTAL={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
         lines.append(f"    depends_on:")
