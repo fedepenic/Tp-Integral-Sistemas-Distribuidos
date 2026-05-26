@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -14,18 +15,19 @@ import (
 // batches from its dedicated input queue, stamps each with the query identifier,
 // and forwards them to the shared report queue consumed by the client.
 //
-// Each query has exactly one sink instance. The upstream pipeline may have
-// multiple parallel nodes, each of which sends its own EOF. The sink counts
-// EOFs per client and only forwards a single EOF to the report queue once all
-// upstream instances have signalled completion (count == upstreamTotal).
+// Data and EOFs arrive on separate channels: data on the input queue,
+// EOFs on a dedicated exchange. The sink counts EOFs per client and only
+// forwards a single EOF to the report queue once all upstream instances have
+// signalled completion (count == upstreamTotal).
 type sink struct {
 	producer      middleware.Middleware
 	queryID       string
 	upstreamTotal int
+	mu            sync.Mutex
 	eofCount      map[string]int
 }
 
-func (s *sink) handle(msg middleware.Message, ack func(), nack func()) {
+func (s *sink) handleData(msg middleware.Message, ack func(), nack func()) {
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
 		log.Printf("unmarshal batch: %v — discarding", err)
@@ -34,19 +36,6 @@ func (s *sink) handle(msg middleware.Message, ack func(), nack func()) {
 	}
 
 	batch.QueryID = s.queryID
-
-	if batch.Type == protocol.BatchTypeEOF {
-		s.eofCount[batch.ClientID]++
-		log.Printf("sink %s: EOF %d/%d for client %s", s.queryID, s.eofCount[batch.ClientID], s.upstreamTotal, batch.ClientID)
-
-		if s.eofCount[batch.ClientID] < s.upstreamTotal {
-			ack()
-			return
-		}
-
-		delete(s.eofCount, batch.ClientID)
-		log.Printf("sink %s: all EOFs received for client %s, forwarding to report queue", s.queryID, batch.ClientID)
-	}
 
 	data, err := json.Marshal(batch)
 	if err != nil {
@@ -64,6 +53,49 @@ func (s *sink) handle(msg middleware.Message, ack func(), nack func()) {
 	ack()
 }
 
+func (s *sink) handleEOF(msg middleware.Message, ack func(), nack func()) {
+	var batch protocol.Batch
+	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		log.Printf("unmarshal EOF: %v — discarding", err)
+		ack()
+		return
+	}
+
+	s.mu.Lock()
+	s.eofCount[batch.ClientID]++
+	count := s.eofCount[batch.ClientID]
+	s.mu.Unlock()
+
+	log.Printf("sink %s: EOF %d/%d for client %s", s.queryID, count, s.upstreamTotal, batch.ClientID)
+
+	if count < s.upstreamTotal {
+		ack()
+		return
+	}
+
+	s.mu.Lock()
+	delete(s.eofCount, batch.ClientID)
+	s.mu.Unlock()
+
+	log.Printf("sink %s: all EOFs received for client %s — forwarding", s.queryID, batch.ClientID)
+
+	batch.QueryID = s.queryID
+	data, err := json.Marshal(batch)
+	if err != nil {
+		log.Printf("marshal EOF: %v", err)
+		nack()
+		return
+	}
+
+	if err := s.producer.Send(middleware.Message{Body: string(data)}); err != nil {
+		log.Printf("send EOF to report queue: %v", err)
+		nack()
+		return
+	}
+
+	ack()
+}
+
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -73,6 +105,7 @@ func envOrDefault(key, def string) string {
 
 func main() {
 	inputQueue := envOrDefault("INPUT_QUEUE", "q1_results")
+	eofExchange := envOrDefault("EOF_INPUT_EXCHANGE", "eof_q1_data")
 	outputQueue := envOrDefault("OUTPUT_QUEUE", "reports")
 	queryID := envOrDefault("QUERY_ID", "q1")
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
@@ -97,6 +130,14 @@ func main() {
 	}
 	defer consumer.Close()
 
+	// eofConsumer subscribes to the dedicated EOF exchange. Each upstream instance
+	// publishes one EOF here; handleEOF counts up to upstreamTotal before forwarding.
+	eofConsumer, err := middleware.CreateExchangeMiddleware(eofExchange, []string{""}, connSettings)
+	if err != nil {
+		log.Fatalf("connect to EOF exchange %q: %v", eofExchange, err)
+	}
+	defer eofConsumer.Close()
+
 	producer, err := middleware.CreateQueueMiddleware(outputQueue, connSettings)
 	if err != nil {
 		log.Fatalf("connect to output queue %q: %v", outputQueue, err)
@@ -112,7 +153,13 @@ func main() {
 
 	log.Printf("sink %s started: %s -> %s (upstream=%d)", queryID, inputQueue, outputQueue, upstreamTotal)
 
-	if err := consumer.StartConsuming(s.handle); err != nil {
+	go func() {
+		if err := eofConsumer.StartConsuming(s.handleEOF); err != nil {
+			log.Fatalf("consuming from EOF exchange %q: %v", eofExchange, err)
+		}
+	}()
+
+	if err := consumer.StartConsuming(s.handleData); err != nil {
 		log.Fatalf("consuming from %s: %v", inputQueue, err)
 	}
 }

@@ -47,7 +47,7 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 		return nil, fmt.Errorf("create output dir %s: %w", dir, err)
 	}
 
-	path := filepath.Join(dir, queryID+"_results.csv")
+	path := filepath.Join(dir, "query_"+queryID+".csv")
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("create output file %s: %w", path, err)
@@ -107,23 +107,21 @@ func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 	if len(batch.Transactions) > 0 {
 		if !w.headerWritten {
 			w.csv.Write([]string{
-				"timestamp",
-				"from_bank", "from_account",
-				"to_bank", "to_account",
-				"amount_received", "receiving_currency",
-				"amount_paid", "payment_currency",
-				"payment_format",
+				"From Bank",
+				"Account",
+				"To Bank",
+				"Account.1",
+				"Amount Paid",
 			})
 			w.headerWritten = true
 		}
 		for _, t := range batch.Transactions {
 			w.csv.Write([]string{
-				t.Timestamp,
-				t.FromBank, t.FromAccount,
-				t.ToBank, t.ToAccount,
-				strconv.FormatFloat(t.AmountReceived, 'f', -1, 64), t.ReceivingCurrency,
-				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64), t.PaymentCurrency,
-				t.PaymentFormat,
+				t.FromBank,
+				t.FromAccount,
+				t.ToBank,
+				t.ToAccount,
+				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
 			})
 		}
 	}

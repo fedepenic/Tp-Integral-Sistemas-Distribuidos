@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -18,6 +19,7 @@ import (
 type node struct {
 	producer     middleware.Middleware
 	eofBroadcast middleware.Middleware
+	eofProducer  middleware.Middleware
 	mu           sync.Mutex
 	cond         *sync.Cond
 	// globalPending counts messages dequeued but not yet deserialized (clientID unknown).
@@ -26,10 +28,11 @@ type node struct {
 	clientPending map[string]int
 }
 
-func newNode(producer, eofBroadcast middleware.Middleware) *node {
+func newNode(producer, eofBroadcast, eofProducer middleware.Middleware) *node {
 	n := &node{
 		producer:      producer,
 		eofBroadcast:  eofBroadcast,
+		eofProducer:   eofProducer,
 		clientPending: make(map[string]int),
 	}
 	n.cond = sync.NewCond(&n.mu)
@@ -184,8 +187,8 @@ func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 	}
 	n.mu.Unlock()
 
-	if err := n.producer.Send(msg); err != nil {
-		log.Printf("send EOF to output exchange: %v", err)
+	if err := n.eofProducer.Send(msg); err != nil {
+		log.Printf("send EOF to downstream EOF exchange: %v", err)
 		nack()
 		return
 	}
@@ -201,7 +204,10 @@ func envOrDefault(key, def string) string {
 
 func main() {
 	inputQueue := envOrDefault("INPUT_QUEUE", "raw_transactions")
-	outputQueue := envOrDefault("OUTPUT_QUEUE", "q1_results")
+	outputExchange := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
+	outputKeys := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
+	eofOutputExchange := envOrDefault("EOF_OUTPUT_EXCHANGE", "eof_cleaner")
+	eofOutputKeys := strings.Split(envOrDefault("EOF_OUTPUT_KEYS", "usd_filter,period1_q5_filter"), ",")
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr := envOrDefault("RABBITMQ_PORT", "5672")
 	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
@@ -235,9 +241,9 @@ func main() {
 	}
 	defer consumer.Close()
 
-	producer, err := middleware.CreateQueueMiddleware(outputQueue, connSettings)
+	producer, err := middleware.CreateExchangeMiddleware(outputExchange, outputKeys, connSettings)
 	if err != nil {
-		log.Fatalf("connect to output queue %q: %v", outputQueue, err)
+		log.Fatalf("connect to output exchange %q: %v", outputExchange, err)
 	}
 	defer producer.Close()
 
@@ -255,9 +261,17 @@ func main() {
 	}
 	defer eofReceiver.Close()
 
-	n := newNode(producer, eofBroadcast)
+	// eofProducer sends the EOF downstream to the filter nodes once all
+	// in-flight data for a client has been flushed.
+	eofProducer, err := middleware.CreateExchangeMiddleware(eofOutputExchange, eofOutputKeys, connSettings)
+	if err != nil {
+		log.Fatalf("connect to downstream EOF exchange: %v", err)
+	}
+	defer eofProducer.Close()
 
-	log.Printf("cleaner %d/%d started: %s -> %s", instanceID, instanceTotal, inputQueue, outputQueue)
+	n := newNode(producer, eofBroadcast, eofProducer)
+
+	log.Printf("cleaner %d/%d started: %s -> %s%v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
 
 	go func() {
 		if err := eofReceiver.StartConsuming(n.handleEOF); err != nil {

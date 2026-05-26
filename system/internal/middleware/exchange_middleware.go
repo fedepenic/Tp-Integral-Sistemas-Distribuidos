@@ -141,7 +141,7 @@ func (em *ExchangeMiddleware) SendWithKey(msg Message, key string) error {
 	return em.publish(msg, key)
 }
 
-// publish es el método interno que realiza el publish a RabbitMQ.
+// publish es el métod0 interno que realiza el publish a RabbitMQ.
 func (em *ExchangeMiddleware) publish(msg Message, key string) error {
 	if err := em.ch.PublishWithContext(
 		context.Background(),

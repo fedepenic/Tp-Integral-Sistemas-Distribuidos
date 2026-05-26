@@ -11,6 +11,10 @@ import (
 )
 
 type AggregatorWorker[T any, K comparable, S any, O any] struct {
+	/// T = Tipo de item de entrada
+	/// K = Tipo de clave de agregacion
+	/// S = Tipo del estado interno
+	/// O = Tipo del resultado final
 	cfg       AggregatorConfig
 	extractor BatchExtractor[T]
 	logic     AggregatorLogic[T, K, S, O]
