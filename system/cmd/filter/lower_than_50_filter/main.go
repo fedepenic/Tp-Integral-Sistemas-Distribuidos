@@ -8,25 +8,21 @@ import (
 
 // Amount < 50 Filter
 //
-// Entrada:
-//   - Exchange: usd_filtered (fanout from usd_filter)
+// Modo single-queue: data y EOFs llegan por la misma input queue
+// (fanout usd_filtered), igual que el cleaner.
+//
+// Entrada (data + EOFs):
+//   - Exchange: usd_filtered (fanout desde usd_filter)
 //
 // Condición: AmountPaid < 50
 //
-// Salida:
-//   - Queue: q1_data  (sin routing key)
-//
-// EOF:
-//   - Entrada: exchange "eof_usd_filtered", key "amt50_filter"
-//   - Salida:  exchange "eof_q1_data", key ""
+// Salida (data + EOFs):
+//   - Queue: q1_data (mismo destino — el sink lee data y EOF en orden FIFO)
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_EXCHANGE      — exchange de entrada (usd_filtered)
-//   OUTPUT_QUEUE        — cola de salida  (q1_data)
-//   EOF_INPUT_EXCHANGE  — exchange EOF de entrada (eof_usd_filtered)
-//   EOF_INPUT_KEY       — routing key propia       (amt50_filter)
-//   EOF_OUTPUT_EXCHANGE — exchange EOF de salida   (eof_q1_data)
+//   INPUT_EXCHANGE — exchange de entrada (usd_filtered)
+//   OUTPUT_QUEUE   — cola de salida para data y EOFs (q1_data)
 
 func main() {
 	conn := config.ConnSettings()
@@ -37,19 +33,15 @@ func main() {
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
-
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
-
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool { return t.AmountPaid < 50 },
 		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
+			// EOFMiddleware reusa outputMW: data y EOFs viajan por q1_data en
+			// orden FIFO hasta el sink.
+			{Middleware: outputMW, GetKey: nil, EOFMiddleware: outputMW},
 		},
 		inputMW,
-		eofInMW,
+		nil, // single-queue: data + EOFs por inputMW
 		config.UpstreamCount(),
 	).Run()
 }

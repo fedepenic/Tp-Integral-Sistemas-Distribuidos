@@ -8,21 +8,20 @@ import (
 
 // USD Filter
 //
-// Entrada:
+// Modo single-queue: data y EOFs llegan por la misma input queue
+// (transactions_clean con key txn_for_usd), igual que el cleaner.
+//
+// Entrada (data + EOFs):
 //   - Exchange: transactions_clean, key: txn_for_usd
 //
 // Condición: PaymentCurrency == "US Dollar"
 //
-// Salidas:
+// Salidas (data y EOFs comparten exchange):
 //  1. Exchange fanout "usd_filtered" (GetKey = nil)
-//     Las queues usd_for_q1, usd_for_q3p2 y usd_for_p1 están bound a este exchange.
-//  2. Exchange direct "usd_for_q2"   (GetKey = from_bank)
-//     Particiona por banco de origen para el worker MaxBank de Q2.
-//
-// EOF:
-//   - Entrada:  exchange "eof_cleaner",  key "usd_filter"
-//   - Salida 1: exchange "eof_usd_filtered"  (notifica a los consumidores del fanout)
-//   - Salida 2: exchange "eof_usd_for_q2"    (notifica a los workers MaxBank)
+//     amt50_filter (y, en su momento, period2/period1) leen de este fanout.
+//  2. Exchange direct "usd_for_q2" (GetKey = from_bank)
+//     Particiona por banco para el worker MaxBank de Q2.
+//     EOFMiddleware = nil porque el pipeline Q2 todavía no está implementado.
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
@@ -30,10 +29,6 @@ import (
 //   INPUT_KEY              — routing key propia (txn_for_usd)
 //   OUTPUT_FANOUT_EXCHANGE — exchange fanout de salida (usd_filtered)
 //   OUTPUT_DIRECT_EXCHANGE — exchange direct de salida (usd_for_q2)
-//   EOF_INPUT_EXCHANGE     — exchange EOF de entrada (eof_cleaner)
-//   EOF_INPUT_KEY          — routing key propia en ese exchange (usd_filter)
-//   EOF_FANOUT_EXCHANGE    — exchange EOF para el fanout (eof_usd_filtered)
-//   EOF_DIRECT_EXCHANGE    — exchange EOF para el direct (eof_usd_for_q2)
 
 func main() {
 	conn := config.ConnSettings()
@@ -47,29 +42,22 @@ func main() {
 	directMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer directMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
-
-	eofFanoutMW := config.Exchange("EOF_FANOUT_EXCHANGE", []string{""}, conn)
-	defer eofFanoutMW.Close()
-
-	eofDirectMW := config.Exchange("EOF_DIRECT_EXCHANGE", []string{""}, conn)
-	defer eofDirectMW.Close()
-
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool {
 			return t.PaymentCurrency == "US Dollar"
 		},
 		[]*filterworker.Output{
-			{Middleware: fanoutMW, GetKey: nil, EOFMiddleware: eofFanoutMW},
+			// Fanout: EOF se propaga aquí para que llegue a amt50_filter (single-queue).
+			{Middleware: fanoutMW, GetKey: nil, EOFMiddleware: fanoutMW},
+			// Direct para Q2: aún no hay consumidor, no propagamos EOF.
 			{
 				Middleware:    directMW,
 				GetKey:        func(t protocol.Transaction) string { return t.FromBank },
-				EOFMiddleware: eofDirectMW,
+				EOFMiddleware: nil,
 			},
 		},
 		inputMW,
-		eofInMW,
+		nil, // single-queue: data + EOFs por inputMW
 		config.UpstreamCount(),
 	).Run()
 }

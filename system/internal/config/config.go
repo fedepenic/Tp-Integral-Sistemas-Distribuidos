@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 )
@@ -67,4 +68,12 @@ func Exchange(nameKey string, routingKeys []string, conn middleware.ConnSettings
 // también se lee del entorno. Útil para exchanges de EOF con key fija.
 func ExchangeWithKey(nameKey string, routingKeyEnv string, conn middleware.ConnSettings) middleware.Middleware {
 	return Exchange(nameKey, []string{MustEnv(routingKeyEnv)}, conn)
+}
+
+// ExchangeWithKeyList retorna un ExchangeMiddleware con múltiples routing keys
+// leídas de una env var con valores separados por coma.
+// Útil para exchanges donde el producer debe fanout a múltiples routing keys.
+func ExchangeWithKeyList(nameKey string, keysEnv string, conn middleware.ConnSettings) middleware.Middleware {
+	keys := strings.Split(MustEnv(keysEnv), ",")
+	return Exchange(nameKey, keys, conn)
 }

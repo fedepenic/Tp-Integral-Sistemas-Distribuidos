@@ -86,6 +86,8 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
+	log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
+
 	w, err := r.writerFor(batch.ClientID, batch.QueryID)
 	if err != nil {
 		log.Printf("reporter: open writer for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
@@ -100,6 +102,7 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 	}
 
 	w.csv.Flush()
+	log.Printf("reporter: batch written client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
 	ack()
 }
 
