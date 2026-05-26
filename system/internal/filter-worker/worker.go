@@ -18,27 +18,43 @@ type FilterFunc func(t protocol.Transaction) bool
 
 // Worker es el núcleo genérico de todos los filters del sistema.
 //
-// Soporta dos modos según eofInMW:
+// Soporta TRES modos:
 //
-//   - eofInMW == nil → single-queue: data y EOFs llegan por la misma queue
-//     (igual que el cleaner desde raw_transactions). El consumer procesa
-//     ambos en orden FIFO, y al recibir upstreamCount EOFs propaga.
+//   - Coordinated: eofBroadcast y eofReceiver no son nil. Igual al patrón del
+//     cleaner para escalado horizontal: data + EOFs llegan por la inputMW
+//     compartida (competing consumers entre instancias), y cuando una
+//     instancia recibe un EOF lo retransmite a TODAS las instancias del nivel
+//     vía eofBroadcast. eofReceiver entrega esos broadcasts a esta instancia.
+//     Conteo per-cliente: cada instancia espera upstreamCount EOFs por cliente
+//     y luego, tras drenar su in-flight (cleaner pattern), reenvía 1 EOF por
+//     cliente downstream.
 //
-//   - eofInMW != nil → dual-queue: data por inputMW y EOFs por un exchange
-//     dedicado eofInMW. Dos consumers en paralelo. Modo legacy que NO drena
-//     la queue de datos al recibir EOF — solo úsalo en pipelines en los que
-//     ya no se está modificando la lógica.
+//   - Single-queue: eofInMW == nil y eofBroadcast == nil. Una sola instancia,
+//     EOFs FIFO con la data en la misma queue. Conteo global, propaga al
+//     llegar a upstreamCount.
+//
+//   - Dual-queue (legacy): eofInMW != nil. EOFs por un exchange dedicado,
+//     dos consumers en paralelo. Tiene race condition: NO drena al recibir
+//     EOF. Se mantiene para filtros que aún no migraron.
 type Worker struct {
 	filterFn      FilterFunc
 	outputs       []*Output
 	inputMW       middleware.Middleware
 	eofInMW       middleware.Middleware
+	eofBroadcast  middleware.Middleware
+	eofReceiver   middleware.Middleware
 	upstreamCount int
+
+	mu            sync.Mutex
+	cond          *sync.Cond
+	globalPending int
+	clientPending map[string]int
+	eofCount      map[string]int
+	propagated    map[string]bool
 }
 
-// NewWorker construye un Worker listo para ejecutar.
-//
-// Pasar eofInMW == nil activa el modo single-queue.
+// NewWorker construye un Worker en modo single-queue (eofInMW=nil) o
+// dual-queue legacy (eofInMW!=nil).
 func NewWorker(
 	filterFn FilterFunc,
 	outputs []*Output,
@@ -46,16 +62,59 @@ func NewWorker(
 	eofInMW middleware.Middleware,
 	upstreamCount int,
 ) *Worker {
-	return &Worker{
+	return newWorkerInternal(filterFn, outputs, inputMW, eofInMW, nil, nil, upstreamCount)
+}
+
+// NewWorkerCoordinated construye un Worker en modo coordinated: usa el patrón
+// del cleaner (broadcast de EOFs entre instancias del mismo nivel + drenado
+// per-cliente) para que el filtro escale horizontalmente con múltiples
+// instancias compitiendo en una shared queue.
+//
+//   - inputMW:       queue compartida con data + EOFs (competing consumers)
+//   - eofBroadcast:  exchange interno con TODOS los routing keys del nivel,
+//                    usado para retransmitir un EOF que llegó por inputMW a
+//                    todas las instancias.
+//   - eofReceiver:   queue propia de esta instancia bindeada a eofBroadcast
+//                    con su routing key única, donde llegan los broadcasts.
+//   - upstreamCount: cantidad de instancias upstream → cuántos EOFs por
+//                    cliente esperar antes de propagar.
+func NewWorkerCoordinated(
+	filterFn FilterFunc,
+	outputs []*Output,
+	inputMW middleware.Middleware,
+	eofBroadcast middleware.Middleware,
+	eofReceiver middleware.Middleware,
+	upstreamCount int,
+) *Worker {
+	return newWorkerInternal(filterFn, outputs, inputMW, nil, eofBroadcast, eofReceiver, upstreamCount)
+}
+
+func newWorkerInternal(
+	filterFn FilterFunc,
+	outputs []*Output,
+	inputMW middleware.Middleware,
+	eofInMW middleware.Middleware,
+	eofBroadcast middleware.Middleware,
+	eofReceiver middleware.Middleware,
+	upstreamCount int,
+) *Worker {
+	w := &Worker{
 		filterFn:      filterFn,
 		outputs:       outputs,
 		inputMW:       inputMW,
 		eofInMW:       eofInMW,
+		eofBroadcast:  eofBroadcast,
+		eofReceiver:   eofReceiver,
 		upstreamCount: upstreamCount,
+		clientPending: make(map[string]int),
+		eofCount:      make(map[string]int),
+		propagated:    make(map[string]bool),
 	}
+	w.cond = sync.NewCond(&w.mu)
+	return w
 }
 
-// Run bloquea hasta que el worker termina (todos los EOFs propagados o SIGTERM).
+// Run bloquea hasta que el worker termina.
 // El caller es responsable de llamar Close() en todos los middlewares al salir.
 func (w *Worker) Run() {
 	sigCh := make(chan os.Signal, 1)
@@ -67,21 +126,172 @@ func (w *Worker) Run() {
 		if w.eofInMW != nil {
 			w.eofInMW.StopConsuming()
 		}
+		if w.eofReceiver != nil {
+			w.eofReceiver.StopConsuming()
+		}
 	}()
 
-	if w.eofInMW == nil {
-		w.runSingleQueue()
-	} else {
+	switch {
+	case w.eofBroadcast != nil && w.eofReceiver != nil:
+		w.runCoordinated()
+	case w.eofInMW != nil:
 		w.runDualQueue()
+	default:
+		w.runSingleQueue()
 	}
 
 	log.Println("[filter-worker] done")
 }
 
-// runSingleQueue: data y EOFs llegan por la misma input queue. Con QoS=1
-// y un único consumer, cuando se procesa el EOF Nº upstreamCount se sabe
-// que toda la data previa ya fue procesada (FIFO de la queue), así que es
-// seguro propagar y detenerse.
+// runCoordinated implementa el patrón del cleaner para múltiples instancias
+// del filtro compartiendo una input queue.
+func (w *Worker) runCoordinated() {
+	var wg sync.WaitGroup
+
+	// EOF receiver: consume broadcasts internos entre instancias del nivel.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := w.eofReceiver.StartConsuming(w.handleEOFBroadcast)
+		if err != nil && err != middleware.ErrMessageMiddlewareDisconnected {
+			log.Printf("[filter-worker] eof receiver error: %v", err)
+		}
+	}()
+
+	// Data consumer: lee data + EOFs de la shared input queue.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := w.inputMW.StartConsuming(w.handleDataCoordinated)
+		if err != nil && err != middleware.ErrMessageMiddlewareDisconnected {
+			log.Printf("[filter-worker] data consumer error: %v", err)
+		}
+	}()
+
+	wg.Wait()
+}
+
+// handleDataCoordinated procesa data y retransmite EOFs vía eofBroadcast.
+// Sigue el mismo patrón que cleaner.handleData.
+func (w *Worker) handleDataCoordinated(msg middleware.Message, ack func(), nack func()) {
+	w.mu.Lock()
+	w.globalPending++
+	w.mu.Unlock()
+
+	var batch protocol.Batch
+	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		log.Printf("[filter-worker] malformed message — discarding: %v", err)
+		w.mu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.mu.Unlock()
+		ack()
+		return
+	}
+
+	if batch.Type == protocol.BatchTypeEOF {
+		w.mu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.mu.Unlock()
+
+		log.Printf("[filter-worker] EOF received from input client=%s — broadcasting to peers", batch.ClientID)
+		if err := w.eofBroadcast.Send(msg); err != nil {
+			log.Printf("[filter-worker] broadcast EOF: %v", err)
+			nack()
+			return
+		}
+		ack()
+		return
+	}
+
+	if batch.Type != protocol.BatchTypeTransactions {
+		w.mu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.mu.Unlock()
+		ack()
+		return
+	}
+
+	w.mu.Lock()
+	w.globalPending--
+	w.clientPending[batch.ClientID]++
+	w.mu.Unlock()
+
+	log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+
+	filtered := w.applyFilter(batch.Transactions)
+	log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(batch.Transactions), len(filtered))
+
+	if len(filtered) > 0 {
+		for i, out := range w.outputs {
+			if err := out.publish(batch.ClientID, filtered); err != nil {
+				log.Printf("[filter-worker] error publishing to output %d: %v", i, err)
+				w.mu.Lock()
+				w.clientPending[batch.ClientID]--
+				w.cond.Broadcast()
+				w.mu.Unlock()
+				nack()
+				return
+			}
+		}
+	}
+
+	w.mu.Lock()
+	w.clientPending[batch.ClientID]--
+	w.cond.Broadcast()
+	w.mu.Unlock()
+	ack()
+}
+
+// handleEOFBroadcast procesa los EOFs que retransmitieron las instancias del
+// nivel (incluida esta misma) vía eofBroadcast. Cuenta por cliente, espera
+// drain y propaga downstream.
+func (w *Worker) handleEOFBroadcast(msg middleware.Message, ack func(), nack func()) {
+	var batch protocol.Batch
+	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		log.Printf("[filter-worker] malformed EOF broadcast — discarding: %v", err)
+		ack()
+		return
+	}
+
+	w.mu.Lock()
+	w.eofCount[batch.ClientID]++
+	count := w.eofCount[batch.ClientID]
+	alreadyPropagated := w.propagated[batch.ClientID]
+	w.mu.Unlock()
+
+	log.Printf("[filter-worker] EOF broadcast client=%s (%d/%d)", batch.ClientID, count, w.upstreamCount)
+	ack()
+
+	if count < w.upstreamCount || alreadyPropagated {
+		return
+	}
+
+	// Reclaim "propagator" status atomically.
+	w.mu.Lock()
+	if w.propagated[batch.ClientID] {
+		w.mu.Unlock()
+		return
+	}
+	w.propagated[batch.ClientID] = true
+
+	// Drain in-flight: igual que cleaner.handleEOF.
+	for w.globalPending > 0 || w.clientPending[batch.ClientID] > 0 {
+		w.cond.Wait()
+	}
+	w.mu.Unlock()
+
+	log.Printf("[filter-worker] all EOFs received for client=%s — propagating", batch.ClientID)
+	for i, out := range w.outputs {
+		if err := out.sendEOF(batch.ClientID); err != nil {
+			log.Printf("[filter-worker] error propagating EOF for client=%s output=%d: %v", batch.ClientID, i, err)
+		}
+	}
+}
+
+// runSingleQueue: single instancia, data + EOFs en la misma queue, FIFO.
 func (w *Worker) runSingleQueue() {
 	eofCount := 0
 
@@ -142,9 +352,8 @@ func (w *Worker) runSingleQueue() {
 	}
 }
 
-// runDualQueue: comportamiento legacy con consumers separados para data y EOF.
-// Tiene la race condition de no drenar la queue de datos al recibir EOF; se
-// mantiene únicamente para filtros que aún no migraron a single-queue.
+// runDualQueue (legacy): consumers separados para data y EOF. NO drena al
+// recibir EOF — usar solo en filtros que no migraron al patrón coordinado.
 func (w *Worker) runDualQueue() {
 	done := make(chan struct{})
 

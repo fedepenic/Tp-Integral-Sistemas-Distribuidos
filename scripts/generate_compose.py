@@ -17,22 +17,24 @@ SINKS = [
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
 # upstream_count_env_var=None means UPSTREAM_INSTANCES is always 1.
 NAMED_FILTERS = [
-    # usd_filter: single-queue mode + competing consumers via a shared named queue
-    # bound to transactions_clean. All N usd_filter instances consume from the
-    # same queue, so RabbitMQ load-balances batches between them.
+    # usd_filter: coordinated mode (cleaner pattern). Shared input queue +
+    # internal EOF broadcast among peer instances. Each instance counts EOFs
+    # per client and propagates 1 EOF per client downstream after its own drain.
     ("usd_filter", "usd_filter", "N_USD_FILTER", "N_CLEANERS", {
         "INPUT_QUEUE_NAME":       "usd_filter_input",
         "INPUT_EXCHANGE":         "transactions_clean",
         "INPUT_KEY":              "txn_for_usd",
+        "EOF_BROADCAST_EXCHANGE": "usd_filter_eof",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
         "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
     }),
-    # amt50_filter: same pattern. UPSTREAM_INSTANCES is now N_USD_FILTER because
-    # each upstream usd_filter sends its own EOF down through usd_filtered.
+    # amt50_filter: same coordinated pattern. UPSTREAM_INSTANCES=N_USD_FILTER
+    # because each upstream usd_filter sends its own EOF per client.
     ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", "N_USD_FILTER", {
-        "INPUT_QUEUE_NAME":    "amt50_filter_input",
-        "INPUT_EXCHANGE":      "usd_filtered",
-        "OUTPUT_QUEUE":        "q1_data",
+        "INPUT_QUEUE_NAME":       "amt50_filter_input",
+        "INPUT_EXCHANGE":         "usd_filtered",
+        "EOF_BROADCAST_EXCHANGE": "amt50_filter_eof",
+        "OUTPUT_QUEUE":           "q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
         "INPUT_QUEUE":         "usd_for_q3p2",
