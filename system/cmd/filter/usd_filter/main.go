@@ -9,10 +9,12 @@ import (
 // USD Filter
 //
 // Modo single-queue: data y EOFs llegan por la misma input queue
-// (transactions_clean con key txn_for_usd), igual que el cleaner.
+// (named queue compartida bindeada a transactions_clean con key txn_for_usd),
+// igual que el cleaner. Todas las instancias del filtro consumen de la misma
+// queue (competing consumers → load balancing).
 //
 // Entrada (data + EOFs):
-//   - Exchange: transactions_clean, key: txn_for_usd
+//   - Queue compartida (INPUT_QUEUE_NAME) bindeada a transactions_clean, key txn_for_usd
 //
 // Condición: PaymentCurrency == "US Dollar"
 //
@@ -25,15 +27,16 @@ import (
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_EXCHANGE         — exchange de entrada (transactions_clean)
-//   INPUT_KEY              — routing key propia (txn_for_usd)
+//   INPUT_QUEUE_NAME       — nombre de la queue compartida (e.g. usd_filter_input)
+//   INPUT_EXCHANGE         — exchange al que se bindea (transactions_clean)
+//   INPUT_KEY              — routing key del binding (txn_for_usd)
 //   OUTPUT_FANOUT_EXCHANGE — exchange fanout de salida (usd_filtered)
 //   OUTPUT_DIRECT_EXCHANGE — exchange direct de salida (usd_for_q2)
 
 func main() {
 	conn := config.ConnSettings()
 
-	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
+	inputMW := config.SharedQueueWithKey("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	fanoutMW := config.Exchange("OUTPUT_FANOUT_EXCHANGE", []string{""}, conn)

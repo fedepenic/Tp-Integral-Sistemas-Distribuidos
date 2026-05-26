@@ -77,3 +77,26 @@ func ExchangeWithKeyList(nameKey string, keysEnv string, conn middleware.ConnSet
 	keys := strings.Split(MustEnv(keysEnv), ",")
 	return Exchange(nameKey, keys, conn)
 }
+
+// SharedQueue declara una named queue durable bindeada a un exchange con las
+// routing keys provistas. N consumers que llamen a esta función con el mismo
+// queueName quedan compitiendo en la misma queue (load balancing).
+//
+//   - nameKey:     env var con el nombre de la queue compartida
+//   - exchangeKey: env var con el nombre del exchange al que se bindea
+//   - routingKeys: routing keys del binding (usar [""] para exchanges
+//     que se publican con key vacía, e.g. fanout-style)
+func SharedQueue(nameKey, exchangeKey string, routingKeys []string, conn middleware.ConnSettings) middleware.Middleware {
+	name := MustEnv(nameKey)
+	exchange := MustEnv(exchangeKey)
+	mw, err := middleware.NewSharedQueueMiddleware(name, exchange, routingKeys, conn)
+	if err != nil {
+		log.Fatalf("[config] shared queue %s on exchange %s: %v", name, exchange, err)
+	}
+	return mw
+}
+
+// SharedQueueWithKey es como SharedQueue pero lee la routing key de una env var.
+func SharedQueueWithKey(nameKey, exchangeKey, routingKeyEnv string, conn middleware.ConnSettings) middleware.Middleware {
+	return SharedQueue(nameKey, exchangeKey, []string{MustEnv(routingKeyEnv)}, conn)
+}

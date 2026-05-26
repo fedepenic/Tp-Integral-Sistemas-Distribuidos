@@ -51,6 +51,58 @@ func NewQueueMiddleware(queueName string, connectionSettings ConnSettings) (Midd
 	}, nil
 }
 
+// NewSharedQueueMiddleware declares a named, durable, non-exclusive queue
+// AND binds it to an exchange with the given routing keys. All N consumers
+// that call this constructor with the same queue name end up consuming from
+// the same queue, so RabbitMQ distributes messages round-robin (competing
+// consumers / load balancing).
+//
+// Use this instead of NewExchangeMiddleware when you want to scale a stage
+// horizontally with work distribution — NewExchangeMiddleware creates an
+// auto-generated EXCLUSIVE queue per instance, which gives fanout-style
+// duplicate delivery instead of load balancing.
+func NewSharedQueueMiddleware(queueName, exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
+	connStr := fmt.Sprintf("amqp://guest:guest@%s:%d/", connectionSettings.Hostname, connectionSettings.Port)
+	conn, err := amqp.Dial(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareDisconnected, err)
+	}
+
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareDisconnected, err)
+	}
+
+	if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+	}
+
+	q, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
+	if err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+	}
+
+	for _, key := range keys {
+		if err := ch.QueueBind(q.Name, key, exchange, false, nil); err != nil {
+			ch.Close()
+			conn.Close()
+			return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+		}
+	}
+
+	return &QueueMiddleware{
+		conn:      conn,
+		ch:        ch,
+		queueName: q.Name,
+		stopCh:    make(chan struct{}),
+	}, nil
+}
+
 func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func(), nack func())) error {
 	if err := qm.ch.Qos(1, 0, false); err != nil {
 		return fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)

@@ -17,15 +17,20 @@ SINKS = [
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
 # upstream_count_env_var=None means UPSTREAM_INSTANCES is always 1.
 NAMED_FILTERS = [
-    # usd_filter is in single-queue mode: data and EOFs share transactions_clean.
+    # usd_filter: single-queue mode + competing consumers via a shared named queue
+    # bound to transactions_clean. All N usd_filter instances consume from the
+    # same queue, so RabbitMQ load-balances batches between them.
     ("usd_filter", "usd_filter", "N_USD_FILTER", "N_CLEANERS", {
+        "INPUT_QUEUE_NAME":       "usd_filter_input",
         "INPUT_EXCHANGE":         "transactions_clean",
         "INPUT_KEY":              "txn_for_usd",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
         "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
     }),
-    # amt50_filter is in single-queue mode: data and EOFs share usd_filtered.
-    ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", None, {
+    # amt50_filter: same pattern. UPSTREAM_INSTANCES is now N_USD_FILTER because
+    # each upstream usd_filter sends its own EOF down through usd_filtered.
+    ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", "N_USD_FILTER", {
+        "INPUT_QUEUE_NAME":    "amt50_filter_input",
         "INPUT_EXCHANGE":      "usd_filtered",
         "OUTPUT_QUEUE":        "q1_data",
     }),

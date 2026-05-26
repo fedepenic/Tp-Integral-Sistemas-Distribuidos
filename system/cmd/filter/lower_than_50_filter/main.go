@@ -9,10 +9,12 @@ import (
 // Amount < 50 Filter
 //
 // Modo single-queue: data y EOFs llegan por la misma input queue
-// (fanout usd_filtered), igual que el cleaner.
+// (named queue compartida bindeada al fanout usd_filtered), igual que el
+// cleaner. Todas las instancias consumen de la misma queue (competing
+// consumers → load balancing).
 //
 // Entrada (data + EOFs):
-//   - Exchange: usd_filtered (fanout desde usd_filter)
+//   - Queue compartida (INPUT_QUEUE_NAME) bindeada a usd_filtered con key ""
 //
 // Condición: AmountPaid < 50
 //
@@ -21,13 +23,16 @@ import (
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_EXCHANGE — exchange de entrada (usd_filtered)
-//   OUTPUT_QUEUE   — cola de salida para data y EOFs (q1_data)
+//   INPUT_QUEUE_NAME — nombre de la queue compartida (e.g. amt50_filter_input)
+//   INPUT_EXCHANGE   — exchange al que se bindea (usd_filtered)
+//   OUTPUT_QUEUE     — cola de salida para data y EOFs (q1_data)
 
 func main() {
 	conn := config.ConnSettings()
 
-	inputMW := config.Exchange("INPUT_EXCHANGE", []string{""}, conn)
+	// usd_filtered se publica con key "" (fanout-style), así que la queue
+	// compartida se bindea con esa misma key.
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
