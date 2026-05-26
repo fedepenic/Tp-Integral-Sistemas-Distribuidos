@@ -90,15 +90,11 @@ SERVICES = [
         "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
         "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
         "EOF_OUTPUT_KEYS":    "usd_filter,period1_q5_filter",
-        "RABBITMQ_HOST":      "rabbitmq",
-        "RABBITMQ_PORT":      "5672",
         "EOF_EXCHANGE":       "cleaner_eof",
     }),
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
         "INPUT_QUEUE":  "wireach_txn",
         "OUTPUT_QUEUE": "converted_usd",
-        "RABBITMQ_HOST": "rabbitmq",
-        "RABBITMQ_PORT": "5672",
     }),
 ]
 
