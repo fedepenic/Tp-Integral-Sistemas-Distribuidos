@@ -140,7 +140,23 @@ func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
 	n.clientPending[batch.ClientID]++
 	n.mu.Unlock()
 
+	log.Printf("cleaner: batch received client=%s type=%s txns=%d accounts=%d", batch.ClientID, batch.Type, len(batch.Transactions), len(batch.Accounts))
+
 	cleaned := cleanBatch(batch)
+
+	log.Printf("cleaner: batch cleaned client=%s type=%s in=%d out=%d", batch.ClientID, batch.Type, len(batch.Transactions)+len(batch.Accounts), len(cleaned.Transactions)+len(cleaned.Accounts))
+
+	// Account batches are cleaned and acked but not forwarded: no current
+	// downstream consumer needs them, and forwarding them would just clog
+	// the transaction filters' queues.
+	if cleaned.Type != protocol.BatchTypeTransactions {
+		n.mu.Lock()
+		n.clientPending[batch.ClientID]--
+		n.cond.Broadcast()
+		n.mu.Unlock()
+		ack()
+		return
+	}
 
 	data, err := json.Marshal(cleaned)
 	if err != nil {
@@ -172,7 +188,14 @@ func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
 
 // handleEOF is the callback for EOF signals arriving on the broadcast exchange.
 // It blocks until all in-flight data messages for the same client are drained,
-// then forwards the EOF to the output exchange so downstream nodes receive it.
+// then forwards the EOF to downstream consumers.
+//
+// EOFs are sent through TWO paths:
+//   - producer (transactions_clean exchange) — same exchange/keys as the data,
+//     for filters operating in single-queue mode (e.g. usd_filter). The EOF
+//     arrives FIFO after all data messages in the consumer's data queue.
+//   - eofProducer (eof_cleaner exchange) — dedicated EOF exchange for filters
+//     still operating in dual-queue mode (e.g. period1_q5_filter).
 func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
@@ -186,6 +209,12 @@ func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 		n.cond.Wait()
 	}
 	n.mu.Unlock()
+
+	if err := n.producer.Send(msg); err != nil {
+		log.Printf("send EOF to data exchange: %v", err)
+		nack()
+		return
+	}
 
 	if err := n.eofProducer.Send(msg); err != nil {
 		log.Printf("send EOF to downstream EOF exchange: %v", err)

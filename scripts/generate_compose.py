@@ -11,35 +11,36 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
-    ("2", "q2_data", "eof_q2_data", "N_MAXBANK"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
 # upstream_count_env_var=None means UPSTREAM_INSTANCES is always 1.
 NAMED_FILTERS = [
+    # usd_filter: coordinated mode (cleaner pattern). Shared input queue +
+    # internal EOF broadcast among peer instances. Each instance counts EOFs
+    # per client and propagates 1 EOF per client downstream after its own drain.
     ("usd_filter", "usd_filter", "N_USD_FILTER", "N_CLEANERS", {
+        "INPUT_QUEUE_NAME":       "usd_filter_input",
         "INPUT_EXCHANGE":         "transactions_clean",
         "INPUT_KEY":              "txn_for_usd",
+        "EOF_BROADCAST_EXCHANGE": "usd_filter_eof",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
         "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
-        "EOF_INPUT_EXCHANGE":     "eof_cleaner",
-        "EOF_INPUT_KEY":          "usd_filter",
-        "EOF_FANOUT_EXCHANGE":    "eof_usd_filtered",
-        "EOF_DIRECT_EXCHANGE":    "eof_usd_for_q2",
     }),
-    ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", None, {
-        "INPUT_EXCHANGE":      "usd_filtered",
-        "OUTPUT_QUEUE":        "q1_data",
-        "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
-        "EOF_INPUT_KEY":       "amt50_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_q1_data",
+    # amt50_filter: same coordinated pattern. UPSTREAM_INSTANCES=N_USD_FILTER
+    # because each upstream usd_filter sends its own EOF per client.
+    ("amt50_filter", "lower_than_50_filter", "N_AMT50_FILTER", "N_USD_FILTER", {
+        "INPUT_QUEUE_NAME":       "amt50_filter_input",
+        "INPUT_EXCHANGE":         "usd_filtered",
+        "EOF_BROADCAST_EXCHANGE": "amt50_filter_eof",
+        "OUTPUT_QUEUE":           "q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":            "usd_for_q3p2",
-        "OUTPUT_DIRECT_EXCHANGE": "usd_period2",
-        "EOF_INPUT_EXCHANGE":     "eof_usd_filtered",
-        "EOF_INPUT_KEY":          "period2_filter",
-        "EOF_OUTPUT_EXCHANGE":    "eof_usd_period2",
+        "INPUT_QUEUE":         "usd_for_q3p2",
+        "OUTPUT_DIRECT_EXCHANGE":        "usd_period2",
+        "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
+        "EOF_INPUT_KEY":       "eof_period2_filter",
+        "EOF_OUTPUT_EXCHANGE": "eof_usd_period2",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
         "INPUT_QUEUE":           "usd_for_p1",
@@ -47,7 +48,7 @@ NAMED_FILTERS = [
         "OUTPUT_Q4_FO_EXCHANGE": "usd_period1_for_q4_fo",
         "OUTPUT_Q4_FI_EXCHANGE": "usd_period1_for_q4_fi",
         "EOF_INPUT_EXCHANGE":    "eof_usd_filtered",
-        "EOF_INPUT_KEY":         "period1_filter",
+        "EOF_INPUT_KEY":         "eof_period1_filter",
         "EOF_Q3_EXCHANGE":       "eof_usd_period1_for_q3",
         "EOF_Q4_FO_EXCHANGE":    "eof_usd_period1_for_q4_fo",
         "EOF_Q4_FI_EXCHANGE":    "eof_usd_period1_for_q4_fi",
@@ -88,8 +89,10 @@ SERVICES = [
         "INPUT_QUEUE":        "raw_transactions",
         "OUTPUT_EXCHANGE":    "transactions_clean",
         "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
+        # EOFs go through OUTPUT_EXCHANGE (single-queue mode for usd_filter)
+        # AND through EOF_OUTPUT_EXCHANGE (dual-queue mode for period1_q5_filter).
         "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
-        "EOF_OUTPUT_KEYS":    "usd_filter,period1_q5_filter",
+        "EOF_OUTPUT_KEYS":    "period1_q5_filter",
         "EOF_EXCHANGE":       "cleaner_eof",
     }),
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
@@ -336,7 +339,7 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append("")
 
     # Sinks — always single-instance, one per query
-    for query_id, input_queue, eof_exchange, upstream_env_var in SINKS:
+    for query_id, input_queue, upstream_env_var in SINKS:
         upstream = int(env.get(upstream_env_var, 1))
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
@@ -345,7 +348,6 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"    environment:")
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
-        lines.append(f"      - EOF_INPUT_EXCHANGE={eof_exchange}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
         lines.append(f"      - UPSTREAM_TOTAL={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")

@@ -100,7 +100,12 @@ func (o *Output) sendBatch(clientID string, txns []protocol.Transaction, key str
 
 // sendEOF publica un batch de tipo EOF usando EOFMiddleware.
 // Los EOFs no tienen routing key — siempre usan Send.
+// Si EOFMiddleware es nil, no se envía nada (output sin EOF, e.g. la salida
+// direct hacia un pipeline aún no implementado).
 func (o *Output) sendEOF(clientID string) error {
+	if o.EOFMiddleware == nil {
+		return nil
+	}
 	if err := o.validatePartitioning(); err != nil {
 		return err
 	}
