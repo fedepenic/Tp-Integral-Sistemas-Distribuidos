@@ -31,7 +31,7 @@ import (
 //
 // Salidas (data y EOFs comparten exchange):
 //  1. usd_filtered (fanout) → amt50_filter (y, en su momento, period2/period1)
-//  2. usd_for_q2 (direct, GetKey=from_bank) → Q2 (sin EOF por ahora)
+//  2. usd_for_q2 (direct, GetKey=from_bank) → Q2 (con EOF)
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES, INSTANCE_ID, INSTANCE_TOTAL
@@ -92,7 +92,6 @@ func main() {
 
 	directMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer directMW.Close()
-
 	log.Printf("usd_filter %d/%d started", instanceID, instanceTotal)
 
 	filterworker.NewWorkerCoordinated(
@@ -106,7 +105,7 @@ func main() {
 				GetBusinessKey: func(t protocol.Transaction) string { return t.FromBank },
 				RoutingPrefix:  directPrefix,
 				Partitions:     directPartitions,
-				EOFMiddleware:  nil,
+				EOFMiddleware:  directMW,
 			},
 		},
 		inputMW,

@@ -99,7 +99,7 @@ func (o *Output) sendBatch(clientID string, txns []protocol.Transaction, key str
 }
 
 // sendEOF publica un batch de tipo EOF usando EOFMiddleware.
-// Los EOFs no tienen routing key — siempre usan Send.
+// Si hay particionado, envía un EOF por partición usando SendWithKey.
 // Si EOFMiddleware es nil, no se envía nada (output sin EOF, e.g. la salida
 // direct hacia un pipeline aún no implementado).
 func (o *Output) sendEOF(clientID string) error {
@@ -117,5 +117,15 @@ func (o *Output) sendEOF(clientID string) error {
 	if err != nil {
 		return fmt.Errorf("marshal eof: %w", err)
 	}
-	return o.EOFMiddleware.Send(middleware.Message{Body: string(data)})
+	msg := middleware.Message{Body: string(data)}
+	if o.GetBusinessKey == nil {
+		return o.EOFMiddleware.Send(msg)
+	}
+	for partition := 0; partition < o.Partitions; partition++ {
+		routingKey := worker.RoutingKey(o.RoutingPrefix, partition)
+		if err := o.EOFMiddleware.SendWithKey(msg, routingKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
