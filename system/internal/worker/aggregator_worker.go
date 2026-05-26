@@ -20,12 +20,17 @@ type AggregatorWorker[T any, K comparable, S any, O any] struct {
 	logic     AggregatorLogic[T, K, S, O]
 	resultKey ResultKeyFunc[O]
 
-	input      middleware.Middleware
-	output     middleware.Middleware
-	controlPub middleware.Middleware
-	controlSub middleware.Middleware
-	stateMu    sync.Mutex
-	taskStates map[string]*taskState[K, S]
+	input         middleware.Middleware
+	output        middleware.Middleware
+	controlPub    middleware.Middleware
+	controlSub    middleware.Middleware
+	stateMu       sync.Mutex
+	cond          *sync.Cond
+	globalPending int
+	clientPending map[string]int
+	eofCount      map[string]int
+	propagated    map[string]bool
+	taskStates    map[string]*taskState[K, S]
 }
 
 func NewAggregatorWorker[T any, K comparable, S any, O any](
@@ -88,23 +93,28 @@ func NewAggregatorWorker[T any, K comparable, S any, O any](
 		return nil, err
 	}
 
-	return &AggregatorWorker[T, K, S, O]{
-		cfg:        cfg,
-		extractor:  extractor,
-		logic:      logic,
-		resultKey:  resultKey,
-		input:      input,
-		output:     output,
-		controlPub: controlPub,
-		controlSub: controlSub,
-		taskStates: map[string]*taskState[K, S]{},
-	}, nil
+	worker := &AggregatorWorker[T, K, S, O]{
+		cfg:           cfg,
+		extractor:     extractor,
+		logic:         logic,
+		resultKey:     resultKey,
+		input:         input,
+		output:        output,
+		controlPub:    controlPub,
+		controlSub:    controlSub,
+		clientPending: map[string]int{},
+		eofCount:      map[string]int{},
+		propagated:    map[string]bool{},
+		taskStates:    map[string]*taskState[K, S]{},
+	}
+	worker.cond = sync.NewCond(&worker.stateMu)
+	return worker, nil
 }
 
 func (w *AggregatorWorker[T, K, S, O]) Run() {
 	go func() {
 		err := w.controlSub.StartConsuming(func(msg middleware.Message, ack func(), nack func()) {
-			w.handleControlMessage(msg, ack, nack)
+			w.handleEOFBroadcast(msg, ack, nack)
 		})
 		if err != nil && err != middleware.ErrMessageMiddlewareDisconnected {
 			log.Printf("[aggregator] control consumer error: %v", err)
@@ -126,35 +136,62 @@ func (w *AggregatorWorker[T, K, S, O]) Close() {
 	_ = w.controlSub.Close()
 }
 
-func (w *AggregatorWorker[T, K, S, O]) handleControlMessage(msg middleware.Message, ack func(), nack func()) {
-	var ctrl ControlMessage
-	if err := json.Unmarshal([]byte(msg.Body), &ctrl); err != nil {
-		log.Printf("[aggregator] malformed control message: %v", err)
-		nack()
-		return
-	}
-	if ctrl.Type != ControlTypeEOF {
+func (w *AggregatorWorker[T, K, S, O]) handleEOFBroadcast(msg middleware.Message, ack func(), nack func()) {
+	var batch protocol.Batch
+	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		log.Printf("[aggregator] malformed EOF broadcast: %v", err)
 		ack()
 		return
 	}
-	if ctrl.SenderID == w.cfg.InstanceID {
+	if batch.Type != protocol.BatchTypeEOF {
 		ack()
 		return
 	}
-	clientID := ctrl.ClientID
+	clientID := batch.ClientID
 	if clientID == "" {
 		clientID = defaultClientID
 	}
-	if err := w.handleControlEOF(clientID, ctrl.SenderID, ctrl.Seq); err != nil {
-		nack()
+
+	w.stateMu.Lock()
+	w.eofCount[clientID]++
+	count := w.eofCount[clientID]
+	alreadyPropagated := w.propagated[clientID]
+	w.stateMu.Unlock()
+
+	log.Printf("[aggregator] EOF broadcast client=%s (%d/%d)", clientID, count, w.cfg.UpstreamInstances)
+	ack()
+
+	if count < w.cfg.UpstreamInstances || alreadyPropagated {
 		return
 	}
-	ack()
+
+	w.stateMu.Lock()
+	if w.propagated[clientID] {
+		w.stateMu.Unlock()
+		return
+	}
+	w.propagated[clientID] = true
+	for w.globalPending > 0 || w.clientPending[clientID] > 0 {
+		w.cond.Wait()
+	}
+	w.stateMu.Unlock()
+
+	if err := w.flush(clientID); err != nil {
+		log.Printf("[aggregator] error flushing client=%s: %v", clientID, err)
+	}
 }
 
 func (w *AggregatorWorker[T, K, S, O]) handleDataMessage(msg middleware.Message, ack func(), nack func()) {
+	w.stateMu.Lock()
+	w.globalPending++
+	w.stateMu.Unlock()
+
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+		w.stateMu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.stateMu.Unlock()
 		nack()
 		log.Printf("[aggregator] malformed batch: %v", err)
 		return
@@ -166,7 +203,12 @@ func (w *AggregatorWorker[T, K, S, O]) handleDataMessage(msg middleware.Message,
 	}
 
 	if batch.Type == protocol.BatchTypeEOF {
-		if err := w.handleEOF(clientID, true); err != nil {
+		w.stateMu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.stateMu.Unlock()
+		if err := w.controlPub.Send(msg); err != nil {
+			log.Printf("[aggregator] broadcast EOF error: %v", err)
 			nack()
 			return
 		}
@@ -176,27 +218,42 @@ func (w *AggregatorWorker[T, K, S, O]) handleDataMessage(msg middleware.Message,
 
 	items, ok := w.extractor(batch)
 	if !ok || len(items) == 0 {
+		w.stateMu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.stateMu.Unlock()
 		ack()
 		return
 	}
 
+	w.stateMu.Lock()
+	w.globalPending--
+	w.clientPending[clientID]++
+	w.stateMu.Unlock()
+
 	if err := w.handleItems(clientID, items); err != nil {
+		w.stateMu.Lock()
+		w.clientPending[clientID]--
+		w.cond.Broadcast()
+		w.stateMu.Unlock()
 		nack()
 		return
 	}
+
+	w.stateMu.Lock()
+	w.clientPending[clientID]--
+	w.cond.Broadcast()
+	w.stateMu.Unlock()
 	ack()
 }
 
 func (w *AggregatorWorker[T, K, S, O]) handleItems(clientID string, items []T) error {
-	shouldFlush := false
-
 	w.stateMu.Lock()
 	task := w.getOrCreateTaskLocked(clientID)
-	if task.FlushDone || task.Flushing {
+	if w.propagated[clientID] {
 		w.stateMu.Unlock()
 		return nil
 	}
-	task.PendingMessages++
 	for _, item := range items {
 		key := w.logic.Key(item)
 		state, ok := task.State[key]
@@ -205,112 +262,8 @@ func (w *AggregatorWorker[T, K, S, O]) handleItems(clientID string, items []T) e
 		}
 		task.State[key] = w.logic.Accumulate(state, item)
 	}
-	task.PendingMessages--
-	if task.canFlush() {
-		task.Flushing = true
-		shouldFlush = true
-	}
 	w.stateMu.Unlock()
-
-	if shouldFlush {
-		if err := w.flush(clientID); err != nil {
-			w.resetFlushing(clientID)
-			return err
-		}
-	}
 	return nil
-}
-
-func (w *AggregatorWorker[T, K, S, O]) handleEOF(clientID string, publishControl bool) error {
-	shouldFlush := false
-	pending := 0
-	received := 0
-	expected := 0
-	seq := 0
-
-	w.stateMu.Lock()
-	task := w.getOrCreateTaskLocked(clientID)
-	if !task.FlushDone && !task.Flushing {
-		if task.ReceivedEOFs < task.ExpectedEOFs {
-			task.ReceivedEOFs++
-		}
-		if publishControl {
-			task.NextControlSeq++
-			seq = task.NextControlSeq
-		}
-		pending = task.PendingMessages
-		received = task.ReceivedEOFs
-		expected = task.ExpectedEOFs
-		if task.canFlush() {
-			task.Flushing = true
-			shouldFlush = true
-		}
-	}
-	w.stateMu.Unlock()
-
-	if publishControl {
-		if err := w.publishControlEOF(clientID, seq); err != nil {
-			return err
-		}
-	}
-
-	if shouldFlush {
-		if err := w.flush(clientID); err != nil {
-			w.resetFlushing(clientID)
-			return err
-		}
-		return nil
-	}
-
-	log.Printf("[aggregator] EOF registered client=%s pending=%d received=%d expected=%d", clientID, pending, received, expected)
-	return nil
-}
-
-func (w *AggregatorWorker[T, K, S, O]) handleControlEOF(clientID string, senderID int, seq int) error {
-	shouldFlush := false
-	pending := 0
-	received := 0
-	expected := 0
-
-	w.stateMu.Lock()
-	task := w.getOrCreateTaskLocked(clientID)
-	if !task.FlushDone && !task.Flushing {
-		lastSeq := task.LastControlSeq[senderID]
-		if seq > lastSeq {
-			task.LastControlSeq[senderID] = seq
-			if task.ReceivedEOFs < task.ExpectedEOFs {
-				task.ReceivedEOFs++
-			}
-		}
-		pending = task.PendingMessages
-		received = task.ReceivedEOFs
-		expected = task.ExpectedEOFs
-		if task.canFlush() {
-			task.Flushing = true
-			shouldFlush = true
-		}
-	}
-	w.stateMu.Unlock()
-
-	if shouldFlush {
-		if err := w.flush(clientID); err != nil {
-			w.resetFlushing(clientID)
-			return err
-		}
-		return nil
-	}
-
-	log.Printf("[aggregator] control EOF registered client=%s pending=%d received=%d expected=%d", clientID, pending, received, expected)
-	return nil
-}
-
-func (w *AggregatorWorker[T, K, S, O]) publishControlEOF(clientID string, seq int) error {
-	ctrl := ControlMessage{Type: ControlTypeEOF, ClientID: clientID, SenderID: w.cfg.InstanceID, Seq: seq}
-	body, err := json.Marshal(ctrl)
-	if err != nil {
-		return fmt.Errorf("marshal control: %w", err)
-	}
-	return w.controlPub.Send(middleware.Message{Body: string(body)})
 }
 
 func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
@@ -396,16 +349,8 @@ func (w *AggregatorWorker[T, K, S, O]) sendResultBatch(batch ResultBatch[O], key
 func (w *AggregatorWorker[T, K, S, O]) getOrCreateTaskLocked(clientID string) *taskState[K, S] {
 	task, ok := w.taskStates[clientID]
 	if !ok {
-		task = newTaskState[K, S](w.cfg.UpstreamInstances)
+		task = newTaskState[K, S]()
 		w.taskStates[clientID] = task
 	}
 	return task
-}
-
-func (w *AggregatorWorker[T, K, S, O]) resetFlushing(clientID string) {
-	w.stateMu.Lock()
-	if task, ok := w.taskStates[clientID]; ok {
-		task.Flushing = false
-	}
-	w.stateMu.Unlock()
 }
