@@ -11,6 +11,7 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
+    ("2", "q2_data", "eof_q2_data", "N_MAXBANK"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -34,11 +35,11 @@ NAMED_FILTERS = [
         "EOF_OUTPUT_EXCHANGE": "eof_q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":         "usd_for_q3p2",
-        "OUTPUT_QUEUE":        "usd_period2",
-        "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
-        "EOF_INPUT_KEY":       "period2_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_usd_period2",
+        "INPUT_QUEUE":            "usd_for_q3p2",
+        "OUTPUT_DIRECT_EXCHANGE": "usd_period2",
+        "EOF_INPUT_EXCHANGE":     "eof_usd_filtered",
+        "EOF_INPUT_KEY":          "period2_filter",
+        "EOF_OUTPUT_EXCHANGE":    "eof_usd_period2",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
         "INPUT_QUEUE":           "usd_for_p1",
@@ -101,6 +102,127 @@ SERVICES = [
     }),
 ]
 
+# (service_name, dockerfile, instance_count_env_var, upstream_count_env_var, extra_env)
+AGGREGATORS = [
+    (
+        "max_per_bank",
+        "cmd/aggregators/max_per_bank/Dockerfile",
+        "N_MAXBANK",
+        "N_USD_FILTER",
+        {
+            "INPUT_EXCHANGE":       "usd_for_q2",
+            "INPUT_KEY_PREFIX":     "maxbank",
+            "OUTPUT_QUEUE":         "q2_data",
+            "EOF_CONTROL_EXCHANGE": "eof_usd_for_q2",
+            "EOF_CONTROL_KEY":      "max_per_bank",
+        }
+    ),
+    (
+        "avg_per_payment_format",
+        "cmd/aggregators/avg_per_payment_format/Dockerfile",
+        "N_AVG_PER_PAY",
+        "N_PERIOD1_FILTER",
+        {
+            "INPUT_EXCHANGE":       "usd_period1_for_q3",
+            "INPUT_KEY_PREFIX":     "avgfmt",
+
+            "OUTPUT_EXCHANGE":         "q3_candidates",
+
+            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q3",
+            "EOF_CONTROL_KEY":      "avg_per_payment_format",
+        },
+    ),
+    (
+        "fan_in",
+        "cmd/aggregators/fan_in/Dockerfile",
+        "N_FI",
+        "N_PERIOD1_FILTER",
+        {
+            "INPUT_EXCHANGE":       "usd_period1_for_q4_fi",
+            "INPUT_KEY_PREFIX":     "fi",
+
+            "OUTPUT_EXCHANGE":      "scatter_gather_fi",
+
+            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q4_fi",
+            "EOF_CONTROL_KEY":      "fan_in",
+        },
+    ),
+    (
+        "fan_out",
+        "cmd/aggregators/fan_out/Dockerfile",
+        "N_FO",
+        "N_PERIOD1_FILTER",
+        {
+            "INPUT_EXCHANGE":       "usd_period1_for_q4_fo",
+            "INPUT_KEY_PREFIX":     "fo",
+
+            "OUTPUT_EXCHANGE":      "scatter_gather_fo",
+
+            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q4_fo",
+            "EOF_CONTROL_KEY":      "fan_out",
+        },
+    ),
+    (
+        "scatter_gather",
+        "cmd/aggregators/scatter_gather/Dockerfile",
+        "N_SG",
+        "N_JOINER_SG",
+        {
+            "INPUT_EXCHANGE":       "scatter_gather_data",
+            "INPUT_KEY":            "scatter_gather",
+
+            "OUTPUT_QUEUE":         "q5_data",
+
+            "EOF_CONTROL_EXCHANGE": "eof_scatter_gather",
+            "EOF_CONTROL_KEY":      "scatter_gather",
+        },
+    ),
+]
+
+def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "usd_filter":
+        return {
+            "OUTPUT_DIRECT_PREFIX":     env.get("OUTPUT_DIRECT_PREFIX", "maxbank"),
+            "OUTPUT_DIRECT_PARTITIONS": env.get("N_MAXBANK", "1"),
+        }
+    if name == "period2_filter":
+        return {
+            "OUTPUT_PREFIX":     env.get("OUTPUT_PERIOD2_PREFIX", "joinerformat"),
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
+        }
+    if name == "period1_filter":
+        return {
+            "OUTPUT_Q3_PREFIX":        env.get("OUTPUT_Q3_PREFIX", "avgfmt"),
+            "OUTPUT_Q3_PARTITIONS":    env.get("N_AVG_PER_PAY", "1"),
+
+            "OUTPUT_Q4_FO_PREFIX":     env.get("OUTPUT_Q4_FO_PREFIX", "fo"),
+            "OUTPUT_Q4_FO_PARTITIONS": env.get("N_FO", "1"),
+
+            "OUTPUT_Q4_FI_PREFIX":     env.get("OUTPUT_Q4_FI_PREFIX", "fi"),
+            "OUTPUT_Q4_FI_PARTITIONS": env.get("N_FI", "1"),
+        }
+    return {}
+
+def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "avg_per_payment_format":
+        return {
+            "OUTPUT_KEY_PREFIX":     env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
+        }
+
+    if name == "fan_in":
+        return {
+            "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX_FI", "joinersg"),
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_SG", "1"),
+        }
+
+    if name == "fan_out":
+        return {
+            "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX_FO", "joinersg"),
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_SG", "1"),
+        }
+
+    return {}
 
 def build_compose(env: dict[str, str]) -> str:
     lines = ["services:"]
@@ -173,8 +295,45 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
+            lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+            lines.append(f"      - RABBITMQ_PORT=5672")
             for k, v in extra_env.items():
                 lines.append(f"      - {k}={v}")
+            lines.append(f"    depends_on:")
+            lines.append(f"      rabbitmq:")
+            lines.append(f"        condition: service_healthy")
+            lines.append("")
+
+    # Aggregators
+    for name, dockerfile, count_env_var, upstream_env_var, extra_env in AGGREGATORS:
+        count = int(env.get(count_env_var, 1))
+        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else 1
+
+        env_map = dict(extra_env)
+        env_map.update(aggregators_extra_env(name, env))
+
+        input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
+
+        for i in range(1, count + 1):
+            lines.append(f"  {name}_{i}:")
+            lines.append(f"    build:")
+            lines.append(f"      context: .")
+            lines.append(f"      dockerfile: {dockerfile}")
+            lines.append(f"    environment:")
+            lines.append(f"      - INSTANCE_ID={i}")
+            lines.append(f"      - INSTANCE_TOTAL={count}")
+            lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+            lines.append(f"      - RABBITMQ_PORT=5672")
+            lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
+
+            if input_prefix:
+                lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
+
+            for k, v in env_map.items():
+                if k == "INPUT_KEY_PREFIX":
+                    continue
+                lines.append(f"      - {k}={v}")
+
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
@@ -204,6 +363,8 @@ def build_compose(env: dict[str, str]) -> str:
     for svc_name, filter_name, count_env_var, upstream_env_var, extra_env in NAMED_FILTERS:
         count = int(env.get(count_env_var, 1))
         upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else 1
+        env_map = dict(extra_env)
+        env_map.update(filter_extra_env(svc_name, env))
         for i in range(1, count + 1):
             lines.append(f"  {svc_name}_{i}:")
             lines.append(f"    build:")
@@ -217,7 +378,7 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - RABBITMQ_HOST=rabbitmq")
             lines.append(f"      - RABBITMQ_PORT=5672")
             lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
-            for k, v in extra_env.items():
+            for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")

@@ -64,7 +64,7 @@ func main() {
 			return !ts.Before(start) && ts.Before(end)
 		},
 		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
+			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,
 		eofInMW,

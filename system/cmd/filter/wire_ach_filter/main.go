@@ -48,7 +48,7 @@ func main() {
 			return t.PaymentFormat == "Wire" || t.PaymentFormat == "ACH"
 		},
 		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
+			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,
 		eofInMW,

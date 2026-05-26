@@ -28,6 +28,8 @@ import (
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
 //   INPUT_QUEUE         — cola de entrada (usd_for_q3p2)
 //   OUTPUT_QUEUE        — cola de salida  (usd_period2)
+//   OUTPUT_PREFIX       — prefijo routing key salida
+//   OUTPUT_PARTITIONS   — particiones de salida
 //   EOF_INPUT_EXCHANGE  — exchange EOF de entrada (eof_usd_filtered)
 //   EOF_INPUT_KEY       — routing key propia       (period2_filter)
 //   EOF_OUTPUT_EXCHANGE — exchange EOF de salida   (eof_usd_period2)
@@ -41,10 +43,13 @@ func main() {
 	end, _ := time.Parse(dateLayout, "2022-09-15")
 	end = end.Add(24 * time.Hour)
 
+	outputPrefix := config.MustEnv("OUTPUT_PREFIX")
+	outputPartitions := config.MustEnvInt("OUTPUT_PARTITIONS")
+
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW := config.Queue("OUTPUT_QUEUE", conn)
+	outputMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer outputMW.Close()
 
 	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
@@ -63,9 +68,11 @@ func main() {
 		},
 		[]*filterworker.Output{
 			{
-				Middleware:    outputMW,
-				GetKey:        func(t protocol.Transaction) string { return t.PaymentFormat },
-				EOFMiddleware: eofOutMW,
+				Middleware:     outputMW,
+				GetBusinessKey: func(t protocol.Transaction) string { return t.PaymentFormat },
+				RoutingPrefix:  outputPrefix,
+				Partitions:     outputPartitions,
+				EOFMiddleware:  eofOutMW,
 			},
 		},
 		inputMW,

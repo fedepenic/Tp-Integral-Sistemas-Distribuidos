@@ -18,6 +18,17 @@ func MustEnv(key string) string {
 	return v
 }
 
+// MustEnvInt retorna el valor entero de la variable de entorno key.
+// Termina el proceso con error si la variable no es un entero válido.
+func MustEnvInt(key string) int {
+	v := MustEnv(key)
+	value, err := strconv.Atoi(v)
+	if err != nil {
+		log.Fatalf("[config] env var %s must be a number: %v", key, err)
+	}
+	return value
+}
+
 // ConnSettings lee RABBITMQ_HOST y RABBITMQ_PORT del entorno
 // y retorna el struct de conexión listo para usar.
 func ConnSettings() middleware.ConnSettings {

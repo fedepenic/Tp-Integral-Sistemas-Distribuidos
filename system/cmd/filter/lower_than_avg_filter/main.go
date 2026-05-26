@@ -50,7 +50,7 @@ func main() {
 			return t.AmountPaid < t.AvgForFormat/100.0
 		},
 		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
+			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,
 		eofInMW,

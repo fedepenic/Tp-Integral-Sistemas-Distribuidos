@@ -33,8 +33,14 @@ import (
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
 //   INPUT_QUEUE              — cola de entrada        (usd_for_p1)
 //   OUTPUT_Q3_EXCHANGE       — exchange salida Q3     (usd_period1_for_q3)
+//   OUTPUT_Q3_PREFIX         — prefijo routing key Q3
+//   OUTPUT_Q3_PARTITIONS     — particiones Q3
 //   OUTPUT_Q4_FO_EXCHANGE    — exchange salida Q4 FO  (usd_period1_for_q4_fo)
+//   OUTPUT_Q4_FO_PREFIX      — prefijo routing key Q4 FO
+//   OUTPUT_Q4_FO_PARTITIONS  — particiones Q4 FO
 //   OUTPUT_Q4_FI_EXCHANGE    — exchange salida Q4 FI  (usd_period1_for_q4_fi)
+//   OUTPUT_Q4_FI_PREFIX      — prefijo routing key Q4 FI
+//   OUTPUT_Q4_FI_PARTITIONS  — particiones Q4 FI
 //   EOF_INPUT_EXCHANGE       — exchange EOF entrada    (eof_usd_filtered)
 //   EOF_INPUT_KEY            — routing key propia      (period1_filter)
 //   EOF_Q3_EXCHANGE          — exchange EOF salida Q3  (eof_usd_period1_for_q3)
@@ -49,6 +55,15 @@ func main() {
 	start, _ := time.Parse(dateLayout, "2022-09-01")
 	end, _ := time.Parse(dateLayout, "2022-09-05")
 	end = end.Add(24 * time.Hour)
+
+	q3Prefix := config.MustEnv("OUTPUT_Q3_PREFIX")
+	q3Partitions := config.MustEnvInt("OUTPUT_Q3_PARTITIONS")
+
+	q4FOPrefix := config.MustEnv("OUTPUT_Q4_FO_PREFIX")
+	q4FOPartitions := config.MustEnvInt("OUTPUT_Q4_FO_PARTITIONS")
+
+	q4FIPrefix := config.MustEnv("OUTPUT_Q4_FI_PREFIX")
+	q4FIPartitions := config.MustEnvInt("OUTPUT_Q4_FI_PARTITIONS")
 
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
@@ -84,19 +99,25 @@ func main() {
 		},
 		[]*filterworker.Output{
 			{
-				Middleware:    outQ3MW,
-				GetKey:        func(t protocol.Transaction) string { return t.PaymentFormat },
-				EOFMiddleware: eofQ3MW,
+				Middleware:     outQ3MW,
+				GetBusinessKey: func(t protocol.Transaction) string { return t.PaymentFormat },
+				RoutingPrefix:  q3Prefix,
+				Partitions:     q3Partitions,
+				EOFMiddleware:  eofQ3MW,
 			},
 			{
-				Middleware:    outFOMW,
-				GetKey:        func(t protocol.Transaction) string { return t.FromAccount },
-				EOFMiddleware: eofFOMW,
+				Middleware:     outFOMW,
+				GetBusinessKey: func(t protocol.Transaction) string { return t.FromAccount },
+				RoutingPrefix:  q4FOPrefix,
+				Partitions:     q4FOPartitions,
+				EOFMiddleware:  eofFOMW,
 			},
 			{
-				Middleware:    outFIMW,
-				GetKey:        func(t protocol.Transaction) string { return t.ToAccount },
-				EOFMiddleware: eofFIMW,
+				Middleware:     outFIMW,
+				GetBusinessKey: func(t protocol.Transaction) string { return t.ToAccount },
+				RoutingPrefix:  q4FIPrefix,
+				Partitions:     q4FIPartitions,
+				EOFMiddleware:  eofFIMW,
 			},
 		},
 		inputMW,

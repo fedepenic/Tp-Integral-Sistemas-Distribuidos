@@ -48,7 +48,7 @@ func main() {
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool { return t.AmountPaid < 1.0 },
 		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
+			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,
 		eofInMW,

@@ -14,9 +14,9 @@ import (
 // Condición: PaymentCurrency == "US Dollar"
 //
 // Salidas:
-//  1. Exchange fanout "usd_filtered" (GetKey = nil)
+//  1. Exchange fanout "usd_filtered" (GetBusinessKey = nil)
 //     Las queues usd_for_q1, usd_for_q3p2 y usd_for_p1 están bound a este exchange.
-//  2. Exchange direct "usd_for_q2"   (GetKey = from_bank)
+//  2. Exchange direct "usd_for_q2"   (GetBusinessKey = from_bank)
 //     Particiona por banco de origen para el worker MaxBank de Q2.
 //
 // EOF:
@@ -30,6 +30,8 @@ import (
 //   INPUT_KEY              — routing key propia (txn_for_usd)
 //   OUTPUT_FANOUT_EXCHANGE — exchange fanout de salida (usd_filtered)
 //   OUTPUT_DIRECT_EXCHANGE — exchange direct de salida (usd_for_q2)
+//   OUTPUT_DIRECT_PREFIX   — prefijo routing key salida (por ej. maxbank)
+//   OUTPUT_DIRECT_PARTITIONS — particiones de salida
 //   EOF_INPUT_EXCHANGE     — exchange EOF de entrada (eof_cleaner)
 //   EOF_INPUT_KEY          — routing key propia en ese exchange (usd_filter)
 //   EOF_FANOUT_EXCHANGE    — exchange EOF para el fanout (eof_usd_filtered)
@@ -37,6 +39,8 @@ import (
 
 func main() {
 	conn := config.ConnSettings()
+	directPrefix := config.MustEnv("OUTPUT_DIRECT_PREFIX")
+	directPartitions := config.MustEnvInt("OUTPUT_DIRECT_PARTITIONS")
 
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
@@ -61,11 +65,13 @@ func main() {
 			return t.PaymentCurrency == "US Dollar"
 		},
 		[]*filterworker.Output{
-			{Middleware: fanoutMW, GetKey: nil, EOFMiddleware: eofFanoutMW},
+			{Middleware: fanoutMW, GetBusinessKey: nil, EOFMiddleware: eofFanoutMW},
 			{
-				Middleware:    directMW,
-				GetKey:        func(t protocol.Transaction) string { return t.FromBank },
-				EOFMiddleware: eofDirectMW,
+				Middleware:     directMW,
+				GetBusinessKey: func(t protocol.Transaction) string { return t.FromBank },
+				RoutingPrefix:  directPrefix,
+				Partitions:     directPartitions,
+				EOFMiddleware:  eofDirectMW,
 			},
 		},
 		inputMW,

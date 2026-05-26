@@ -54,26 +54,9 @@ services:
       dockerfile: cmd/cleaner/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=2
-      - INPUT_QUEUE=raw_transactions
-      - OUTPUT_EXCHANGE=transactions_clean
-      - OUTPUT_KEYS=txn_for_usd,txn_for_q5
-      - EOF_OUTPUT_EXCHANGE=eof_cleaner
-      - EOF_OUTPUT_KEYS=usd_filter,period1_q5_filter
+      - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - EOF_EXCHANGE=cleaner_eof
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  cleaner_2:
-    build:
-      context: .
-      dockerfile: cmd/cleaner/Dockerfile
-    environment:
-      - INSTANCE_ID=2
-      - INSTANCE_TOTAL=2
       - INPUT_QUEUE=raw_transactions
       - OUTPUT_EXCHANGE=transactions_clean
       - OUTPUT_KEYS=txn_for_usd,txn_for_q5
@@ -93,6 +76,8 @@ services:
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
       - INPUT_QUEUE=wireach_txn
       - OUTPUT_QUEUE=converted_usd
       - RABBITMQ_HOST=rabbitmq
@@ -108,10 +93,113 @@ services:
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
       - INPUT_QUEUE=wireach_txn
       - OUTPUT_QUEUE=converted_usd
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  max_per_bank_1:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/max_per_bank/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_KEY=maxbank_0
+      - INPUT_EXCHANGE=usd_for_q2
+      - OUTPUT_QUEUE=q2_data
+      - EOF_CONTROL_EXCHANGE=eof_usd_for_q2
+      - EOF_CONTROL_KEY=max_per_bank
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  avg_per_payment_format_1:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/avg_per_payment_format/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_KEY=avgfmt_0
+      - INPUT_EXCHANGE=usd_period1_for_q3
+      - OUTPUT_EXCHANGE=q3_candidates
+      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q3
+      - EOF_CONTROL_KEY=avg_per_payment_format
+      - OUTPUT_KEY_PREFIX=joinerformat
+      - OUTPUT_PARTITIONS=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  fan_in_1:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/fan_in/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_KEY=fi_0
+      - INPUT_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_EXCHANGE=scatter_gather_fi
+      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q4_fi
+      - EOF_CONTROL_KEY=fan_in
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  fan_out_1:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/fan_out/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_KEY=fo_0
+      - INPUT_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_EXCHANGE=scatter_gather_fo
+      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q4_fo
+      - EOF_CONTROL_KEY=fan_out
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  scatter_gather_1:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/scatter_gather/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=1
+      - INPUT_EXCHANGE=scatter_gather_data
+      - INPUT_KEY=scatter_gather
+      - OUTPUT_QUEUE=q5_data
+      - EOF_CONTROL_EXCHANGE=eof_scatter_gather
+      - EOF_CONTROL_KEY=scatter_gather
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -132,6 +220,22 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  sink_2:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=2
+      - INPUT_QUEUE=q2_data
+      - EOF_INPUT_EXCHANGE=eof_q2_data
+      - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   usd_filter_1:
     build:
       context: .
@@ -143,7 +247,7 @@ services:
       - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=1
       - INPUT_EXCHANGE=transactions_clean
       - INPUT_KEY=txn_for_usd
       - OUTPUT_FANOUT_EXCHANGE=usd_filtered
@@ -152,6 +256,8 @@ services:
       - EOF_INPUT_KEY=usd_filter
       - EOF_FANOUT_EXCHANGE=eof_usd_filtered
       - EOF_DIRECT_EXCHANGE=eof_usd_for_q2
+      - OUTPUT_DIRECT_PREFIX=maxbank
+      - OUTPUT_DIRECT_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -190,10 +296,12 @@ services:
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=1
       - INPUT_QUEUE=usd_for_q3p2
-      - OUTPUT_QUEUE=usd_period2
+      - OUTPUT_DIRECT_EXCHANGE=usd_period2
       - EOF_INPUT_EXCHANGE=eof_usd_filtered
       - EOF_INPUT_KEY=period2_filter
       - EOF_OUTPUT_EXCHANGE=eof_usd_period2
+      - OUTPUT_PREFIX=joinerformat
+      - OUTPUT_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -219,6 +327,12 @@ services:
       - EOF_Q3_EXCHANGE=eof_usd_period1_for_q3
       - EOF_Q4_FO_EXCHANGE=eof_usd_period1_for_q4_fo
       - EOF_Q4_FI_EXCHANGE=eof_usd_period1_for_q4_fi
+      - OUTPUT_Q3_PREFIX=avgfmt
+      - OUTPUT_Q3_PARTITIONS=1
+      - OUTPUT_Q4_FO_PREFIX=fo
+      - OUTPUT_Q4_FO_PARTITIONS=1
+      - OUTPUT_Q4_FI_PREFIX=fi
+      - OUTPUT_Q4_FI_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -255,7 +369,7 @@ services:
       - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=1
       - INPUT_EXCHANGE=transactions_clean
       - INPUT_KEY=txn_for_q5
       - OUTPUT_QUEUE=period1_for_q5
