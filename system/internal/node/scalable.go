@@ -21,40 +21,62 @@ type ProcessFunc func(batch protocol.Batch) (result protocol.Batch, ok bool)
 
 // Scalable is a horizontally-scalable pipeline node.
 //
-// All instances of the same node compete for messages on a shared input queue.
-// When any instance receives a client EOF it broadcasts it to all peer instances
-// via a dedicated internal exchange. Each peer independently waits until its own
-// in-flight work for that client finishes, then forwards the EOF downstream.
-// This means downstream always receives exactly N EOFs — one per running instance.
+// All instances compete for messages on a shared input queue. When any instance
+// receives a client EOF it broadcasts it to all peer instances via an internal
+// exchange. Each instance counts received broadcasts per client; once the count
+// reaches UPSTREAM_INSTANCES, that instance drains its in-flight work and
+// forwards one EOF downstream.
+//
+// Because every instance does this independently, downstream receives exactly
+// N EOFs per client — one per running instance. UPSTREAM_INSTANCES controls
+// how many upstream broadcasts an instance must collect before it is ready to
+// propagate, not which instance gets to propagate.
+//
+//   - UPSTREAM_INSTANCES = 1 (or not set): propagate on the first broadcast.
+//     Each instance sees exactly one broadcast per client EOF arriving from
+//     upstream (cleaner, currency_converter), so they propagate immediately.
+//   - UPSTREAM_INSTANCES = N: wait for N broadcasts before propagating.
+//     Used when N upstream nodes each send their own EOF per client (e.g.
+//     usd_filter waits for N_CLEANERS=3 cleaner EOFs before propagating).
 //
 // Required environment variables:
 //
 //	INSTANCE_ID, INSTANCE_TOTAL  — identity within the peer group
-//	EOF_EXCHANGE                 — name of the internal coordination exchange
+//	UPSTREAM_INSTANCES           — broadcasts to collect before propagating (default 1)
 //	RABBITMQ_HOST, RABBITMQ_PORT
 type Scalable struct {
 	name          string
 	instanceID    int
 	instanceTotal int
 	conn          middleware.ConnSettings
+	upstreamCount int
 
 	// in-flight tracking — guarded by mu
 	mu            sync.Mutex
 	cond          *sync.Cond
-	globalPending int            // dequeued but clientID not yet known
-	clientPending map[string]int // actively being processed, per client
+	globalPending int
+	clientPending map[string]int
+	eofCount      map[string]int // broadcasts received per client
 }
 
-// New reads INSTANCE_ID, INSTANCE_TOTAL and RabbitMQ connection settings from
-// the environment. name is the service name used to build per-instance peer
-// routing keys, e.g. "cleaner" produces "cleaner_1", "cleaner_2", etc.
+// New reads INSTANCE_ID, INSTANCE_TOTAL, UPSTREAM_INSTANCES and RabbitMQ
+// connection settings from the environment.
+// name is the service name used to build per-instance peer routing keys.
 func New(name string) *Scalable {
+	upstream := 1
+	if v := os.Getenv("UPSTREAM_INSTANCES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			upstream = n
+		}
+	}
 	s := &Scalable{
 		name:          name,
 		instanceID:    mustInt("INSTANCE_ID"),
 		instanceTotal: mustInt("INSTANCE_TOTAL"),
 		conn:          config.ConnSettings(),
+		upstreamCount: upstream,
 		clientPending: make(map[string]int),
+		eofCount:      make(map[string]int),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -91,7 +113,7 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 	}
 	defer eofReceiver.Close()
 
-	log.Printf("[%s] %d/%d started", s.name, s.instanceID, s.instanceTotal)
+	log.Printf("[%s] %d/%d started (upstream=%d)", s.name, s.instanceID, s.instanceTotal, s.upstreamCount)
 
 	var wg sync.WaitGroup
 
@@ -201,7 +223,10 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 }
 
 // handleEOF returns the EOF receiver callback.
-// It blocks until all in-flight work for the client finishes, then forwards the EOF.
+// Each instance counts received broadcasts per client. Once upstreamCount
+// broadcasts have arrived, the instance drains its in-flight work and forwards
+// one EOF downstream. Every instance does this, so downstream receives N EOFs
+// (one per instance of this node).
 func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Message, func(), func()) {
 	return func(msg middleware.Message, ack func(), nack func()) {
 		var batch protocol.Batch
@@ -211,6 +236,19 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Mes
 			return
 		}
 
+		s.mu.Lock()
+		s.eofCount[batch.ClientID]++
+		count := s.eofCount[batch.ClientID]
+		s.mu.Unlock()
+
+		log.Printf("[%s] EOF broadcast client=%s (%d/%d)", s.name, batch.ClientID, count, s.upstreamCount)
+
+		if count < s.upstreamCount {
+			ack()
+			return
+		}
+
+		// All upstream EOFs accounted for — drain in-flight and propagate.
 		s.mu.Lock()
 		for s.globalPending > 0 || s.clientPending[batch.ClientID] > 0 {
 			s.cond.Wait()
