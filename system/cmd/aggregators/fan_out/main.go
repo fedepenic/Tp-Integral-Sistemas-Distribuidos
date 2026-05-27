@@ -27,6 +27,7 @@ func main() {
 		ControlExchange:   mustEnv("EOF_CONTROL_EXCHANGE"),
 		ControlKey:        mustEnv("EOF_CONTROL_KEY"),
 		UpstreamInstances: mustEnvInt("UPSTREAM_INSTANCES"),
+		DataType:          "fanout_result",
 	}
 
 	extractor := func(batch protocol.Batch) ([]protocol.Transaction, bool) {

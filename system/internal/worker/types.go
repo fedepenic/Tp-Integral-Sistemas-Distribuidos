@@ -145,6 +145,9 @@ type AggregatorConfig struct {
 	// El aggregator recien flushea cuando recibio:
 	//   3 EOFs
 	UpstreamInstances int
+
+	// DataType identifica el contenido de Records en el batch de salida.
+	DataType string
 }
 
 type BatchExtractor[T any] func(batch protocol.Batch) ([]T, bool)

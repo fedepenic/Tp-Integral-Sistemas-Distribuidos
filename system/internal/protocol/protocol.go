@@ -10,6 +10,7 @@ import (
 type BatchType string
 
 const (
+	BatchTypeData          BatchType = "data"
 	BatchTypeTransactions  BatchType = "transactions"
 	BatchTypeAccounts      BatchType = "accounts"
 	BatchTypeScatterGather BatchType = "scatter_gather"
@@ -53,9 +54,11 @@ type Batch struct {
 	Type               BatchType           `json:"type"`
 	ClientID           string              `json:"client_id,omitempty"`
 	QueryID            string              `json:"query_id,omitempty"`
+	DataType           string              `json:"data_type,omitempty"`
 	Transactions       []Transaction       `json:"transactions,omitempty"`
 	Accounts           []Account           `json:"accounts,omitempty"`
 	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`
+	Records            json.RawMessage     `json:"records,omitempty"`
 }
 
 func Send(conn net.Conn, batch Batch) error {

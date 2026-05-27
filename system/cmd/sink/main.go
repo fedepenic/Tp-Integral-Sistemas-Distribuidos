@@ -30,44 +30,43 @@ type sink struct {
 func (s *sink) handle(msg middleware.Message, ack func(), nack func()) {
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
-		log.Printf("sink %s: unmarshal batch: %v — discarding", s.queryID, err)
+		log.Printf("sink %s: unmarshal: %v — discarding", s.queryID, err)
 		ack()
 		return
 	}
 
-	batch.QueryID = s.queryID
+	clientID := batch.ClientID
+	if clientID == "" {
+		clientID = "default"
+	}
 
 	if batch.Type == protocol.BatchTypeEOF {
-		s.eofCount[batch.ClientID]++
-		count := s.eofCount[batch.ClientID]
-		log.Printf("sink %s: EOF %d/%d for client %s", s.queryID, count, s.upstreamTotal, batch.ClientID)
-
+		s.eofCount[clientID]++
+		count := s.eofCount[clientID]
+		log.Printf("sink %s: EOF %d/%d for client %s", s.queryID, count, s.upstreamTotal, clientID)
 		if count < s.upstreamTotal {
 			ack()
 			return
 		}
-
-		delete(s.eofCount, batch.ClientID)
-		log.Printf("sink %s: all %d EOFs received for client %s — forwarding to report queue", s.queryID, s.upstreamTotal, batch.ClientID)
-	} else {
-		log.Printf("sink %s: received batch client=%s txns=%d", s.queryID, batch.ClientID, len(batch.Transactions))
+		delete(s.eofCount, clientID)
 	}
+
+	batch.QueryID = s.queryID
 
 	data, err := json.Marshal(batch)
 	if err != nil {
-		log.Printf("sink %s: marshal batch: %v", s.queryID, err)
+		log.Printf("sink %s: marshal: %v", s.queryID, err)
 		nack()
 		return
 	}
-
 	if err := s.producer.Send(middleware.Message{Body: string(data)}); err != nil {
-		log.Printf("sink %s: send to report queue: %v", s.queryID, err)
+		log.Printf("sink %s: send: %v", s.queryID, err)
 		nack()
 		return
 	}
 
 	if batch.Type != protocol.BatchTypeEOF {
-		log.Printf("sink %s: forwarded batch client=%s txns=%d", s.queryID, batch.ClientID, len(batch.Transactions))
+		log.Printf("sink %s: forwarded batch client=%s txns=%d", s.queryID, batch.ClientID, len(batch.Records))
 	}
 	ack()
 }

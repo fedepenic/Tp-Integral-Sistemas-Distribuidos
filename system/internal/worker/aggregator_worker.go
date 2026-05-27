@@ -297,9 +297,22 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 }
 
 func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O) (map[int]struct{}, error) {
+	dataType := w.cfg.DataType
+	if dataType == "" {
+		dataType = "unknown"
+	}
 	if w.resultKey == nil {
-		resultBatch := ResultBatch[O]{Type: ResultTypeData, ClientID: clientID, Records: results}
-		return nil, w.sendResultBatch(resultBatch, "")
+		records, err := json.Marshal(results)
+		if err != nil {
+			return nil, fmt.Errorf("marshal records: %w", err)
+		}
+		outBatch := protocol.Batch{
+			Type:     protocol.BatchTypeData,
+			ClientID: clientID,
+			DataType: dataType,
+			Records:  records,
+		}
+		return nil, w.sendResultBatch(outBatch, "")
 	}
 
 	groups := make(map[string][]O)
@@ -309,11 +322,20 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 	}
 	partitions := make(map[int]struct{}, len(groups))
 	for key, group := range groups {
+		records, err := json.Marshal(group)
+		if err != nil {
+			return nil, fmt.Errorf("marshal records: %w", err)
+		}
 		partition := PartitionForKey(key, w.cfg.OutputPartitions)
 		partitions[partition] = struct{}{}
 		routingKey := RoutingKey(w.cfg.OutputKeyPrefix, partition)
-		resultBatch := ResultBatch[O]{Type: ResultTypeData, ClientID: clientID, Records: group}
-		if err := w.sendResultBatch(resultBatch, routingKey); err != nil {
+		outBatch := protocol.Batch{
+			Type:     protocol.BatchTypeData,
+			ClientID: clientID,
+			DataType: dataType,
+			Records:  records,
+		}
+		if err := w.sendResultBatch(outBatch, routingKey); err != nil {
 			return nil, err
 		}
 	}
@@ -321,7 +343,15 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 }
 
 func (w *AggregatorWorker[T, K, S, O]) sendEOF(partitions map[int]struct{}, clientID string) error {
-	batch := ResultBatch[O]{Type: ResultTypeEOF, ClientID: clientID}
+	dataType := w.cfg.DataType
+	if dataType == "" {
+		dataType = "unknown"
+	}
+	batch := protocol.Batch{
+		Type:     protocol.BatchTypeEOF,
+		ClientID: clientID,
+		DataType: dataType,
+	}
 	if len(partitions) == 0 {
 		return w.sendResultBatch(batch, "")
 	}
@@ -334,7 +364,7 @@ func (w *AggregatorWorker[T, K, S, O]) sendEOF(partitions map[int]struct{}, clie
 	return nil
 }
 
-func (w *AggregatorWorker[T, K, S, O]) sendResultBatch(batch ResultBatch[O], key string) error {
+func (w *AggregatorWorker[T, K, S, O]) sendResultBatch(batch protocol.Batch, key string) error {
 	data, err := json.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
