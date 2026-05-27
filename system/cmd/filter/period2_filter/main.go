@@ -1,41 +1,33 @@
 package main
 
 import (
+	"encoding/json"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-// Period 2 Filter
+// Period 2 Filter — keeps transactions in [2022-09-06, 2022-09-15].
 //
-// Entrada:
-//   - Queue: usd_for_q3p2
+// Transactions are sent to the output exchange grouped by PaymentFormat so
+// that the downstream JoinerQ3 receives them partitioned by format.
 //
-// Condición: Timestamp en [2022-09-06, 2022-09-15]
+// Entrada (data + EOFs):
+//   - Queue INPUT_QUEUE (usd_for_q3p2, inline EOFs from upstream)
 //
 // Salida:
-//   - Queue: usd_period2  (routing key = PaymentFormat)
-//     Las transacciones se agrupan por formato de pago para que el
-//     JoinerQ3 reciba juntas todas las del mismo formato.
-//
-// EOF:
-//   - Entrada: exchange "eof_usd_filtered", key "period2_filter"
-//   - Salida:  exchange "eof_usd_period2", key ""
-//
-// Variables de entorno:
-//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE         — cola de entrada (usd_for_q3p2)
-//   OUTPUT_QUEUE        — cola de salida  (usd_period2)
-//   EOF_INPUT_EXCHANGE  — exchange EOF de entrada (eof_usd_filtered)
-//   EOF_INPUT_KEY       — routing key propia       (period2_filter)
-//   EOF_OUTPUT_EXCHANGE — exchange EOF de salida   (eof_usd_period2)
+//   - Exchange OUTPUT_EXCHANGE (usd_period2, key = PaymentFormat)
 
 const dateLayout = "2006-01-02"
 
 func main() {
-	conn := config.ConnSettings()
+	svc := node.New("period2_filter")
+	conn := svc.Conn()
 
 	start, _ := time.Parse(dateLayout, "2022-09-06")
 	end, _ := time.Parse(dateLayout, "2022-09-15")
@@ -44,32 +36,48 @@ func main() {
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW := config.Queue("OUTPUT_QUEUE", conn)
+	// Use key "" so that Send works for inline EOF propagation.
+	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{""}, conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
-
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
-
-	filterworker.NewWorker(
-		func(t protocol.Transaction) bool {
-			ts, err := time.Parse(dateLayout, t.Timestamp[:10])
-			if err != nil {
-				return false
+	svc.Run(inputMW, outputMW, func(batch protocol.Batch) (protocol.Batch, bool) {
+		if batch.Type != protocol.BatchTypeTransactions {
+			return protocol.Batch{}, false
+		}
+		out := make([]protocol.Transaction, 0, len(batch.Transactions))
+		for _, t := range batch.Transactions {
+			date := strings.ReplaceAll(t.Timestamp[:10], "/", "-")
+			ts, err := time.Parse(dateLayout, date)
+			if err != nil || ts.Before(start) || !ts.Before(end) {
+				continue
 			}
-			return !ts.Before(start) && ts.Before(end)
-		},
-		[]*filterworker.Output{
-			{
-				Middleware:    outputMW,
-				GetKey:        func(t protocol.Transaction) string { return t.PaymentFormat },
-				EOFMiddleware: eofOutMW,
-			},
-		},
-		inputMW,
-		eofInMW,
-		config.UpstreamCount(),
-	).Run()
+			out = append(out, t)
+		}
+		if len(out) == 0 {
+			return protocol.Batch{}, false
+		}
+		sendGroupedByKey(outputMW, batch.ClientID, out, func(t protocol.Transaction) string {
+			return t.PaymentFormat
+		})
+		return protocol.Batch{}, false // already sent grouped; node sends EOF via outputMW
+	})
+}
+
+func sendGroupedByKey(mw middleware.Middleware, clientID string, txns []protocol.Transaction, keyFn func(protocol.Transaction) string) {
+	groups := make(map[string][]protocol.Transaction)
+	for _, t := range txns {
+		k := keyFn(t)
+		groups[k] = append(groups[k], t)
+	}
+	for k, group := range groups {
+		b := protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: group}
+		data, err := json.Marshal(b)
+		if err != nil {
+			log.Printf("[period2_filter] marshal batch key=%s: %v", k, err)
+			continue
+		}
+		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, k); err != nil {
+			log.Printf("[period2_filter] send batch key=%s: %v", k, err)
+		}
+	}
 }

@@ -2,36 +2,25 @@ package main
 
 import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-// Amount < avg/100 Filter  (Q3 final filter)
+// Amount < avg/100 Filter (Q3 final filter)
 //
-// Entrada:
-//   - Queue: q3_candidates
+// Keeps transactions whose AmountPaid is below 1% of the average for their
+// payment format. The average arrives pre-computed in AvgForFormat, set by
+// the upstream joiner.
 //
-// Condición: AmountPaid < AvgForFormat / 100
-//   El promedio por formato de pago llega precalculado en el campo
-//   AvgForFormat del Transaction struct (calculado por el JoinerQ3 upstream).
+// Entrada (data + EOFs):
+//   - Queue INPUT_QUEUE (q3_candidates, inline EOFs from upstream)
 //
 // Salida:
-//   - Queue: q3_data  (sin routing key)
-//
-// EOF:
-//   - Entrada: exchange "eof_q3_candidates", key "amt_avg_filter"
-//   - Salida:  exchange "eof_q3_data", key ""
-//
-// Variables de entorno:
-//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE         — cola de entrada (q3_candidates)
-//   OUTPUT_QUEUE        — cola de salida  (q3_data)
-//   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_q3_candidates)
-//   EOF_INPUT_KEY       — routing key propia   (amt_avg_filter)
-//   EOF_OUTPUT_EXCHANGE — exchange EOF salida  (eof_q3_data)
+//   - Queue OUTPUT_QUEUE (q3_data)
 
 func main() {
-	conn := config.ConnSettings()
+	svc := node.New("amt_avg_filter")
+	conn := svc.Conn()
 
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
@@ -39,21 +28,19 @@ func main() {
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
-
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
-
-	filterworker.NewWorker(
-		func(t protocol.Transaction) bool {
-			return t.AmountPaid < t.AvgForFormat/100.0
-		},
-		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
-		},
-		inputMW,
-		eofInMW,
-		config.UpstreamCount(),
-	).Run()
+	svc.Run(inputMW, outputMW, func(batch protocol.Batch) (protocol.Batch, bool) {
+		if batch.Type != protocol.BatchTypeTransactions {
+			return protocol.Batch{}, false
+		}
+		out := make([]protocol.Transaction, 0, len(batch.Transactions))
+		for _, t := range batch.Transactions {
+			if t.AmountPaid < t.AvgForFormat/100.0 {
+				out = append(out, t)
+			}
+		}
+		if len(out) == 0 {
+			return protocol.Batch{}, false
+		}
+		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: out}, true
+	})
 }
