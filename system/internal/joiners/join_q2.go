@@ -1,4 +1,4 @@
-package joiner
+package joiners
 
 import (
 	"encoding/json"

@@ -62,7 +62,7 @@ type AggregatorConfig struct {
 	// Prefijo usado para construir routing keys dinámicas.
 	//
 	// Ejemplo:
-	//   OutputKeyPrefix = "joiner"
+	//   OutputKeyPrefix = "joiners"
 	//
 	// genera:
 	//   joiner_0
