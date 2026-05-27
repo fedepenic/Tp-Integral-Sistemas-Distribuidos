@@ -320,6 +320,10 @@ func main() {
 	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
 	instanceTotalStr := envOrDefault("INSTANCE_TOTAL", "1")
 	eofExchange := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
+	accountsJoinExchange := envOrDefault("ACCOUNTS_JOIN_EXCHANGE", "join_q2_input")
+	accountsJoinPrefix := envOrDefault("ACCOUNTS_JOIN_KEY_PREFIX", "joinq2")
+	accountsJoinPartsStr := envOrDefault("ACCOUNTS_JOIN_PARTITIONS", "1")
+	accountsJoinParts, err := strconv.Atoi(accountsJoinPartsStr)
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -375,11 +379,6 @@ func main() {
 		log.Fatalf("connect to downstream EOF exchange: %v", err)
 	}
 	defer eofProducer.Close()
-
-	accountsJoinExchange := envOrDefault("ACCOUNTS_JOIN_EXCHANGE", "joiner_q2")
-	accountsJoinPrefix := envOrDefault("ACCOUNTS_JOIN_KEY_PREFIX", "join")
-	accountsJoinPartsStr := envOrDefault("ACCOUNTS_JOIN_PARTITIONS", "1")
-	accountsJoinParts, err := strconv.Atoi(accountsJoinPartsStr)
 
 	if err != nil {
 		log.Fatalf("invalid ACCOUNTS_JOIN_PARTITIONS %q: %v", accountsJoinPartsStr, err)

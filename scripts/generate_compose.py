@@ -394,6 +394,7 @@ def build_compose(env: dict[str, str]) -> str:
         env_map.update(joiners_extra_env(name, env))
 
         input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
+        eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
 
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
@@ -410,9 +411,14 @@ def build_compose(env: dict[str, str]) -> str:
             if input_prefix:
                 lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
 
+            if eof_prefix:
+                lines.append(f"      - EOF_CONTROL_KEY={eof_prefix}_{i-1}")
+
             for k, v in env_map.items():
-                if k == "INPUT_KEY_PREFIX":
+                if k in ("INPUT_KEY_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
                     continue
+                if v in env:
+                    v = env[v]
 
                 lines.append(f"      - {k}={v}")
 
