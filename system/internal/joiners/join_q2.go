@@ -91,7 +91,6 @@ func (j *JoinQ2) handleData(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	log.Printf("[join_q2] received batch: %s ", batch.DataType)
 	clientID := batch.ClientID
 	if clientID == "" {
 		clientID = defaultClientID

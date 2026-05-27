@@ -284,10 +284,11 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	if err := w.sendResults(clientID, results); err != nil {
 		return err
 	}
-
+	log.Printf("[aggregator] flushed results for client %s: %d records", clientID, len(results))
 	if err := w.sendEOF(clientID); err != nil {
 		return err
 	}
+	log.Printf("[aggregator] sent EOF for client %s", clientID)
 
 	w.stateMu.Lock()
 	delete(w.taskStates, clientID)
