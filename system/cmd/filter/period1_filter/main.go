@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
@@ -76,7 +77,8 @@ func main() {
 
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool {
-			ts, err := time.Parse(dateLayout, t.Timestamp[:10])
+			date := strings.ReplaceAll(t.Timestamp[:10], "/", "-")
+			ts, err := time.Parse(dateLayout, date)
 			if err != nil {
 				return false
 			}

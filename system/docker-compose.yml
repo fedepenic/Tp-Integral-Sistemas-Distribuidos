@@ -38,10 +38,42 @@ services:
       dockerfile: cmd/client/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=3
       - GATEWAY_HOST=gateway
       - GATEWAY_PORT=8080
       - INPUT_DIR=/data/client_1
+      - BATCH_SIZE=100
+    volumes:
+      - ../input:/data
+    depends_on:
+      - gateway
+
+  client_2:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=3
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      - INPUT_DIR=/data/client_2
+      - BATCH_SIZE=100
+    volumes:
+      - ../input:/data
+    depends_on:
+      - gateway
+
+  client_3:
+    build:
+      context: .
+      dockerfile: cmd/client/Dockerfile
+    environment:
+      - INSTANCE_ID=3
+      - INSTANCE_TOTAL=3
+      - GATEWAY_HOST=gateway
+      - GATEWAY_PORT=8080
+      - INPUT_DIR=/data/client_3
       - BATCH_SIZE=100
     volumes:
       - ../input:/data
@@ -54,12 +86,10 @@ services:
       dockerfile: cmd/cleaner/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=2
+      - INSTANCE_TOTAL=3
       - INPUT_QUEUE=raw_transactions
       - OUTPUT_EXCHANGE=transactions_clean
       - OUTPUT_KEYS=txn_for_usd,txn_for_q5
-      - EOF_OUTPUT_EXCHANGE=eof_cleaner
-      - EOF_OUTPUT_KEYS=usd_filter,period1_q5_filter
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - EOF_EXCHANGE=cleaner_eof
@@ -73,12 +103,27 @@ services:
       dockerfile: cmd/cleaner/Dockerfile
     environment:
       - INSTANCE_ID=2
-      - INSTANCE_TOTAL=2
+      - INSTANCE_TOTAL=3
       - INPUT_QUEUE=raw_transactions
       - OUTPUT_EXCHANGE=transactions_clean
       - OUTPUT_KEYS=txn_for_usd,txn_for_q5
-      - EOF_OUTPUT_EXCHANGE=eof_cleaner
-      - EOF_OUTPUT_KEYS=usd_filter,period1_q5_filter
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - EOF_EXCHANGE=cleaner_eof
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  cleaner_3:
+    build:
+      context: .
+      dockerfile: cmd/cleaner/Dockerfile
+    environment:
+      - INSTANCE_ID=3
+      - INSTANCE_TOTAL=3
+      - INPUT_QUEUE=raw_transactions
+      - OUTPUT_EXCHANGE=transactions_clean
+      - OUTPUT_KEYS=txn_for_usd,txn_for_q5
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - EOF_EXCHANGE=cleaner_eof
@@ -123,7 +168,21 @@ services:
     environment:
       - QUERY_ID=1
       - INPUT_QUEUE=q1_data
-      - EOF_INPUT_EXCHANGE=eof_q1_data
+      - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=3
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  sink_5:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=5
+      - INPUT_QUEUE=q5_filtered
       - OUTPUT_QUEUE=reports
       - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
@@ -140,18 +199,38 @@ services:
         FILTER_NAME: usd_filter
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=3
+      - INPUT_QUEUE_NAME=usd_filter_input
       - INPUT_EXCHANGE=transactions_clean
       - INPUT_KEY=txn_for_usd
+      - EOF_BROADCAST_EXCHANGE=usd_filter_eof
       - OUTPUT_FANOUT_EXCHANGE=usd_filtered
       - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
-      - EOF_INPUT_EXCHANGE=eof_cleaner
-      - EOF_INPUT_KEY=usd_filter
-      - EOF_FANOUT_EXCHANGE=eof_usd_filtered
-      - EOF_DIRECT_EXCHANGE=eof_usd_for_q2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  usd_filter_2:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: usd_filter
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=3
+      - INPUT_QUEUE_NAME=usd_filter_input
+      - INPUT_EXCHANGE=transactions_clean
+      - INPUT_KEY=txn_for_usd
+      - EOF_BROADCAST_EXCHANGE=usd_filter_eof
+      - OUTPUT_FANOUT_EXCHANGE=usd_filtered
+      - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -164,15 +243,54 @@ services:
         FILTER_NAME: lower_than_50_filter
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=3
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=amt50_filter_input
       - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=amt50_filter_eof
       - OUTPUT_QUEUE=q1_data
-      - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=amt50_filter
-      - EOF_OUTPUT_EXCHANGE=eof_q1_data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  amt50_filter_2:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: lower_than_50_filter
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=3
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=amt50_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=amt50_filter_eof
+      - OUTPUT_QUEUE=q1_data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  amt50_filter_3:
+    build:
+      context: .
+      dockerfile: cmd/filter/Dockerfile
+      args:
+        FILTER_NAME: lower_than_50_filter
+    environment:
+      - INSTANCE_ID=3
+      - INSTANCE_TOTAL=3
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=amt50_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=amt50_filter_eof
+      - OUTPUT_QUEUE=q1_data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -192,7 +310,7 @@ services:
       - INPUT_QUEUE=usd_for_q3p2
       - OUTPUT_QUEUE=usd_period2
       - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=period2_filter
+      - EOF_INPUT_KEY=eof_period2_filter
       - EOF_OUTPUT_EXCHANGE=eof_usd_period2
     depends_on:
       rabbitmq:
@@ -215,7 +333,7 @@ services:
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
       - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=period1_filter
+      - EOF_INPUT_KEY=eof_period1_filter
       - EOF_Q3_EXCHANGE=eof_usd_period1_for_q3
       - EOF_Q4_FO_EXCHANGE=eof_usd_period1_for_q4_fo
       - EOF_Q4_FI_EXCHANGE=eof_usd_period1_for_q4_fi
@@ -255,13 +373,12 @@ services:
       - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=3
+      - INPUT_QUEUE_NAME=period1_q5_filter_input
       - INPUT_EXCHANGE=transactions_clean
       - INPUT_KEY=txn_for_q5
+      - EOF_BROADCAST_EXCHANGE=period1_q5_filter_eof
       - OUTPUT_QUEUE=period1_for_q5
-      - EOF_INPUT_EXCHANGE=eof_cleaner
-      - EOF_INPUT_KEY=period1_q5_filter
-      - EOF_OUTPUT_EXCHANGE=eof_period1_for_q5
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -279,10 +396,8 @@ services:
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=1
       - INPUT_QUEUE=period1_for_q5
+      - EOF_BROADCAST_EXCHANGE=wireach_filter_eof
       - OUTPUT_QUEUE=wireach_txn
-      - EOF_INPUT_EXCHANGE=eof_period1_for_q5
-      - EOF_INPUT_KEY=wireach_filter
-      - EOF_OUTPUT_EXCHANGE=eof_wireach_txn
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -298,12 +413,10 @@ services:
       - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
+      - UPSTREAM_INSTANCES=2
       - INPUT_QUEUE=converted_usd
+      - EOF_BROADCAST_EXCHANGE=usd_lower_than_one_eof
       - OUTPUT_QUEUE=q5_filtered
-      - EOF_INPUT_EXCHANGE=eof_converted_usd
-      - EOF_INPUT_KEY=usd_lower_than_one
-      - EOF_OUTPUT_EXCHANGE=eof_q5_filtered
     depends_on:
       rabbitmq:
         condition: service_healthy

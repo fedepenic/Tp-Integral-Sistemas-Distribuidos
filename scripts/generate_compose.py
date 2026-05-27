@@ -12,6 +12,7 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "N_AMT50_FILTER"),
+    ("5", "q5_filtered", "N_USD_LOWER_THAN_ONE"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -62,41 +63,32 @@ NAMED_FILTERS = [
         "EOF_OUTPUT_EXCHANGE": "eof_q3_data",
     }),
     ("period1_q5_filter", "period1_q5_filter", "N_PERIOD1_Q5_FILTER", "N_CLEANERS", {
-        "INPUT_EXCHANGE":      "transactions_clean",
-        "INPUT_KEY":           "txn_for_q5",
-        "OUTPUT_QUEUE":        "period1_for_q5",
-        "EOF_INPUT_EXCHANGE":  "eof_cleaner",
-        "EOF_INPUT_KEY":       "period1_q5_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_period1_for_q5",
+        "INPUT_QUEUE_NAME":       "period1_q5_filter_input",
+        "INPUT_EXCHANGE":         "transactions_clean",
+        "INPUT_KEY":              "txn_for_q5",
+        "EOF_BROADCAST_EXCHANGE": "period1_q5_filter_eof",
+        "OUTPUT_QUEUE":           "period1_for_q5",
     }),
-    ("wireach_filter", "wire_ach_filter", "N_WIREACH_FILTER", None, {
-        "INPUT_QUEUE":         "period1_for_q5",
-        "OUTPUT_QUEUE":        "wireach_txn",
-        "EOF_INPUT_EXCHANGE":  "eof_period1_for_q5",
-        "EOF_INPUT_KEY":       "wireach_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_wireach_txn",
+    ("wireach_filter", "wire_ach_filter", "N_WIREACH_FILTER", "N_PERIOD1_Q5_FILTER", {
+        "INPUT_QUEUE":            "period1_for_q5",
+        "EOF_BROADCAST_EXCHANGE": "wireach_filter_eof",
+        "OUTPUT_QUEUE":           "wireach_txn",
     }),
-    ("usd_lower_than_one", "lower_than_1_filter", "N_USD_LOWER_THAN_ONE", None, {
-        "INPUT_QUEUE":         "converted_usd",
-        "OUTPUT_QUEUE":        "q5_filtered",
-        "EOF_INPUT_EXCHANGE":  "eof_converted_usd",
-        "EOF_INPUT_KEY":       "usd_lower_than_one",
-        "EOF_OUTPUT_EXCHANGE": "eof_q5_filtered",
+    ("usd_lower_than_one", "lower_than_1_filter", "N_USD_LOWER_THAN_ONE", "N_CURRENCY_CONVERTERS", {
+        "INPUT_QUEUE":            "converted_usd",
+        "EOF_BROADCAST_EXCHANGE": "usd_lower_than_one_eof",
+        "OUTPUT_QUEUE":           "q5_filtered",
     }),
 ]
 
 SERVICES = [
     ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
-        "INPUT_QUEUE":        "raw_transactions",
-        "OUTPUT_EXCHANGE":    "transactions_clean",
-        "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
-        # EOFs go through OUTPUT_EXCHANGE (single-queue mode for usd_filter)
-        # AND through EOF_OUTPUT_EXCHANGE (dual-queue mode for period1_q5_filter).
-        "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
-        "EOF_OUTPUT_KEYS":    "period1_q5_filter",
-        "RABBITMQ_HOST":      "rabbitmq",
-        "RABBITMQ_PORT":      "5672",
-        "EOF_EXCHANGE":       "cleaner_eof",
+        "INPUT_QUEUE":     "raw_transactions",
+        "OUTPUT_EXCHANGE": "transactions_clean",
+        "OUTPUT_KEYS":     "txn_for_usd,txn_for_q5",
+        "RABBITMQ_HOST":   "rabbitmq",
+        "RABBITMQ_PORT":   "5672",
+        "EOF_EXCHANGE":    "cleaner_eof",
     }),
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
         "INPUT_QUEUE":  "wireach_txn",

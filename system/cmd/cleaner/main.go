@@ -19,7 +19,6 @@ import (
 type node struct {
 	producer     middleware.Middleware
 	eofBroadcast middleware.Middleware
-	eofProducer  middleware.Middleware
 	mu           sync.Mutex
 	cond         *sync.Cond
 	// globalPending counts messages dequeued but not yet deserialized (clientID unknown).
@@ -28,11 +27,10 @@ type node struct {
 	clientPending map[string]int
 }
 
-func newNode(producer, eofBroadcast, eofProducer middleware.Middleware) *node {
+func newNode(producer, eofBroadcast middleware.Middleware) *node {
 	n := &node{
 		producer:      producer,
 		eofBroadcast:  eofBroadcast,
-		eofProducer:   eofProducer,
 		clientPending: make(map[string]int),
 	}
 	n.cond = sync.NewCond(&n.mu)
@@ -188,14 +186,8 @@ func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
 
 // handleEOF is the callback for EOF signals arriving on the broadcast exchange.
 // It blocks until all in-flight data messages for the same client are drained,
-// then forwards the EOF to downstream consumers.
-//
-// EOFs are sent through TWO paths:
-//   - producer (transactions_clean exchange) — same exchange/keys as the data,
-//     for filters operating in single-queue mode (e.g. usd_filter). The EOF
-//     arrives FIFO after all data messages in the consumer's data queue.
-//   - eofProducer (eof_cleaner exchange) — dedicated EOF exchange for filters
-//     still operating in dual-queue mode (e.g. period1_q5_filter).
+// then forwards the EOF inline through the data exchange (transactions_clean).
+// All downstream filters receive EOFs in the same queue as data, FIFO.
 func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
@@ -215,12 +207,6 @@ func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 		nack()
 		return
 	}
-
-	if err := n.eofProducer.Send(msg); err != nil {
-		log.Printf("send EOF to downstream EOF exchange: %v", err)
-		nack()
-		return
-	}
 	ack()
 }
 
@@ -235,8 +221,6 @@ func main() {
 	inputQueue       := envOrDefault("INPUT_QUEUE", "raw_transactions")
 	outputExchange   := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
 	outputKeys       := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
-	eofOutputExchange := envOrDefault("EOF_OUTPUT_EXCHANGE", "eof_cleaner")
-	eofOutputKeys    := strings.Split(envOrDefault("EOF_OUTPUT_KEYS", "usd_filter,period1_q5_filter"), ",")
 	host             := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr          := envOrDefault("RABBITMQ_PORT", "5672")
 	instanceIDStr    := envOrDefault("INSTANCE_ID", "1")
@@ -290,15 +274,7 @@ func main() {
 	}
 	defer eofReceiver.Close()
 
-	// eofProducer sends the EOF downstream to the filter nodes once all
-	// in-flight data for a client has been flushed.
-	eofProducer, err := middleware.CreateExchangeMiddleware(eofOutputExchange, eofOutputKeys, connSettings)
-	if err != nil {
-		log.Fatalf("connect to downstream EOF exchange: %v", err)
-	}
-	defer eofProducer.Close()
-
-	n := newNode(producer, eofBroadcast, eofProducer)
+	n := newNode(producer, eofBroadcast)
 
 	log.Printf("cleaner %d/%d started: %s -> %s%v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
 
