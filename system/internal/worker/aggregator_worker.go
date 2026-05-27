@@ -271,7 +271,7 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	task, ok := w.taskStates[clientID]
 	if !ok {
 		w.stateMu.Unlock()
-		return nil
+		return w.sendEOF(clientID)
 	}
 	state := task.State
 	w.stateMu.Unlock()
@@ -281,12 +281,11 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 		results = append(results, w.logic.Finalize(key, value)...)
 	}
 
-	partitions, err := w.sendResults(clientID, results)
-	if err != nil {
+	if err := w.sendResults(clientID, results); err != nil {
 		return err
 	}
 
-	if err := w.sendEOF(partitions, clientID); err != nil {
+	if err := w.sendEOF(clientID); err != nil {
 		return err
 	}
 
@@ -296,7 +295,7 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	return nil
 }
 
-func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O) (map[int]struct{}, error) {
+func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O) error {
 	dataType := w.cfg.DataType
 	if dataType == "" {
 		dataType = "unknown"
@@ -304,7 +303,7 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 	if w.resultKey == nil {
 		records, err := json.Marshal(results)
 		if err != nil {
-			return nil, fmt.Errorf("marshal records: %w", err)
+			return fmt.Errorf("marshal records: %w", err)
 		}
 		outBatch := protocol.Batch{
 			Type:     protocol.BatchTypeData,
@@ -312,7 +311,7 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 			DataType: dataType,
 			Records:  records,
 		}
-		return nil, w.sendResultBatch(outBatch, "")
+		return w.sendResultBatch(outBatch, "")
 	}
 
 	groups := make(map[string][]O)
@@ -320,14 +319,12 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 		key := w.resultKey(result)
 		groups[key] = append(groups[key], result)
 	}
-	partitions := make(map[int]struct{}, len(groups))
 	for key, group := range groups {
 		records, err := json.Marshal(group)
 		if err != nil {
-			return nil, fmt.Errorf("marshal records: %w", err)
+			return fmt.Errorf("marshal records: %w", err)
 		}
 		partition := PartitionForKey(key, w.cfg.OutputPartitions)
-		partitions[partition] = struct{}{}
 		routingKey := RoutingKey(w.cfg.OutputKeyPrefix, partition)
 		outBatch := protocol.Batch{
 			Type:     protocol.BatchTypeData,
@@ -336,13 +333,13 @@ func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O)
 			Records:  records,
 		}
 		if err := w.sendResultBatch(outBatch, routingKey); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return partitions, nil
+	return nil
 }
 
-func (w *AggregatorWorker[T, K, S, O]) sendEOF(partitions map[int]struct{}, clientID string) error {
+func (w *AggregatorWorker[T, K, S, O]) sendEOF(clientID string) error {
 	dataType := w.cfg.DataType
 	if dataType == "" {
 		dataType = "unknown"
@@ -352,10 +349,10 @@ func (w *AggregatorWorker[T, K, S, O]) sendEOF(partitions map[int]struct{}, clie
 		ClientID: clientID,
 		DataType: dataType,
 	}
-	if len(partitions) == 0 {
+	if w.resultKey == nil {
 		return w.sendResultBatch(batch, "")
 	}
-	for partition := range partitions {
+	for partition := 0; partition < w.cfg.OutputPartitions; partition++ {
 		routingKey := RoutingKey(w.cfg.OutputKeyPrefix, partition)
 		if err := w.sendResultBatch(batch, routingKey); err != nil {
 			return err

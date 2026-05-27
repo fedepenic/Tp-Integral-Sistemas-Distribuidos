@@ -11,7 +11,7 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
-    ("2", "q2_data", "eof_q2_data", "N_MAXBANK"),
+    ("2", "q2_data", "eof_q2_data", "N_JOIN_Q2"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -223,7 +223,7 @@ def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
 def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "max_per_bank":
         return {
-            "OUTPUT_KEY_PREFIX": env.get("PREFERIX_JOIN_Q2", "joinq2"),
+            "OUTPUT_KEY_PREFIX": env.get("PREFIX_JOIN_Q2","joinq2"),
             "OUTPUT_PARTITIONS": env.get("N_JOIN_Q2", "1"),
         }
     if name == "avg_per_payment_format":
@@ -260,7 +260,7 @@ def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
 def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "cleaner":
         return {
-            "ACCOUNTS_JOIN_KEY_PREFIX" : env.get("PREFERIX_JOIN_Q2", "joinq2"),
+            "ACCOUNTS_JOIN_KEY_PREFIX" : env.get("PREFIX_JOIN_Q2","joinq2"),
             "ACCOUNTS_JOIN_PARTITIONS":  env.get("N_JOIN_Q2", "1"),
         }
 

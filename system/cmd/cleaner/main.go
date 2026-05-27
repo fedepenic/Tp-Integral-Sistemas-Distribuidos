@@ -313,13 +313,16 @@ func main() {
 	inputQueue := envOrDefault("INPUT_QUEUE", "raw_transactions")
 	outputExchange := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
 	outputKeys := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
+
 	eofOutputExchange := envOrDefault("EOF_OUTPUT_EXCHANGE", "eof_cleaner")
 	eofOutputKeys := strings.Split(envOrDefault("EOF_OUTPUT_KEYS", "usd_filter,period1_q5_filter"), ",")
+	eofExchange := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
+
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr := envOrDefault("RABBITMQ_PORT", "5672")
 	instanceIDStr := envOrDefault("INSTANCE_ID", "1")
 	instanceTotalStr := envOrDefault("INSTANCE_TOTAL", "1")
-	eofExchange := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
+
 	accountsJoinExchange := envOrDefault("ACCOUNTS_JOIN_EXCHANGE", "join_q2_input")
 	accountsJoinPrefix := envOrDefault("ACCOUNTS_JOIN_KEY_PREFIX", "joinq2")
 	accountsJoinPartsStr := envOrDefault("ACCOUNTS_JOIN_PARTITIONS", "1")
@@ -383,7 +386,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid ACCOUNTS_JOIN_PARTITIONS %q: %v", accountsJoinPartsStr, err)
 	}
-	accountsJoin, err := middleware.CreateExchangeMiddleware(accountsJoinExchange, []string{}, connSettings)
+	accountsJoin, err := middleware.CreateExchangeMiddleware(accountsJoinExchange, []string{accountsJoinPrefix}, connSettings)
 	if err != nil {
 		log.Fatalf("connect to accounts join exchange %q: %v", accountsJoinExchange, err)
 	}
