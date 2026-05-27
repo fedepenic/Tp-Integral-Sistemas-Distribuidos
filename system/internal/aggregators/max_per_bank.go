@@ -3,6 +3,7 @@ package aggregators
 import "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 
 type MaxPerBankState struct {
+	BankID        string
 	BankName      string
 	SourceAccount string
 	MaxAmountUSD  float64
@@ -10,6 +11,7 @@ type MaxPerBankState struct {
 }
 
 type MaxPerBankResult struct {
+	BankID        string  `json:"bank_id"`
 	BankName      string  `json:"bank_name"`
 	SourceAccount string  `json:"source_account"`
 	MaxAmountUSD  float64 `json:"max_amount_usd"`
@@ -28,6 +30,7 @@ func (MaxPerBankLogic) Zero() MaxPerBankState {
 func (MaxPerBankLogic) Accumulate(state MaxPerBankState, tx protocol.Transaction) MaxPerBankState {
 	if !state.HasValue || tx.AmountPaid > state.MaxAmountUSD {
 		return MaxPerBankState{
+			BankID:        tx.FromBank,
 			BankName:      tx.FromBank,
 			SourceAccount: tx.FromAccount,
 			MaxAmountUSD:  tx.AmountPaid,
@@ -42,6 +45,7 @@ func (MaxPerBankLogic) Finalize(_ string, state MaxPerBankState) []MaxPerBankRes
 		return nil
 	}
 	return []MaxPerBankResult{{
+		BankID:        state.BankID,
 		BankName:      state.BankName,
 		SourceAccount: state.SourceAccount,
 		MaxAmountUSD:  state.MaxAmountUSD,

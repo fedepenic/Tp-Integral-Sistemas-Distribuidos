@@ -13,6 +13,7 @@ import (
 
 func main() {
 	outputQueue, outputExchange, outputKey := outputConfig()
+	outputKeyPrefix, outputPartitions := outputRoutingConfig()
 	cfg := worker.AggregatorConfig{
 		InstanceID:        mustEnvInt("INSTANCE_ID"),
 		ConnSettings:      connSettings(),
@@ -21,6 +22,8 @@ func main() {
 		OutputQueue:       outputQueue,
 		OutputExchange:    outputExchange,
 		OutputKey:         outputKey,
+		OutputKeyPrefix:   outputKeyPrefix,
+		OutputPartitions:  outputPartitions,
 		ControlExchange:   mustEnv("EOF_CONTROL_EXCHANGE"),
 		ControlKey:        mustEnv("EOF_CONTROL_KEY"),
 		UpstreamInstances: mustEnvInt("UPSTREAM_INSTANCES"),
@@ -34,12 +37,16 @@ func main() {
 		return batch.Transactions, true
 	}
 
+	resultKey := func(res aggregators.MaxPerBankResult) string {
+		return res.BankID
+	}
+
 	workerInstance, err := worker.NewAggregatorWorker[
 		protocol.Transaction,
 		string,
 		aggregators.MaxPerBankState,
 		aggregators.MaxPerBankResult,
-	](cfg, extractor, aggregators.MaxPerBankLogic{}, nil)
+	](cfg, extractor, aggregators.MaxPerBankLogic{}, resultKey)
 	if err != nil {
 		log.Fatalf("[max_per_bank] init error: %v", err)
 	}
@@ -81,4 +88,8 @@ func outputConfig() (string, string, string) {
 		log.Fatalf("[max_per_bank] env var OUTPUT_QUEUE or OUTPUT_EXCHANGE is required")
 	}
 	return queue, exchange, key
+}
+
+func outputRoutingConfig() (string, int) {
+	return mustEnv("OUTPUT_KEY_PREFIX"), mustEnvInt("OUTPUT_PARTITIONS")
 }

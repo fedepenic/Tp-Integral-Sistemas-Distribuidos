@@ -11,6 +11,7 @@ import (
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 // node holds shared state between the data consumer goroutine and the EOF
@@ -20,6 +21,9 @@ type node struct {
 	producer     middleware.Middleware
 	eofBroadcast middleware.Middleware
 	eofProducer  middleware.Middleware
+	accountsJoin middleware.Middleware
+	joinPrefix   string
+	joinParts    int
 	mu           sync.Mutex
 	cond         *sync.Cond
 	// globalPending counts messages dequeued but not yet deserialized (clientID unknown).
@@ -28,11 +32,14 @@ type node struct {
 	clientPending map[string]int
 }
 
-func newNode(producer, eofBroadcast, eofProducer middleware.Middleware) *node {
+func newNode(producer, eofBroadcast, eofProducer, accountsJoin middleware.Middleware, joinPrefix string, joinParts int) *node {
 	n := &node{
 		producer:      producer,
 		eofBroadcast:  eofBroadcast,
 		eofProducer:   eofProducer,
+		accountsJoin:  accountsJoin,
+		joinPrefix:    joinPrefix,
+		joinParts:     joinParts,
 		clientPending: make(map[string]int),
 	}
 	n.cond = sync.NewCond(&n.mu)
@@ -146,9 +153,24 @@ func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
 
 	log.Printf("cleaner: batch cleaned client=%s type=%s in=%d out=%d", batch.ClientID, batch.Type, len(batch.Transactions)+len(batch.Accounts), len(cleaned.Transactions)+len(cleaned.Accounts))
 
-	// Account batches are cleaned and acked but not forwarded: no current
-	// downstream consumer needs them, and forwarding them would just clog
-	// the transaction filters' queues.
+	if cleaned.Type == protocol.BatchTypeAccounts {
+		if err := n.publishAccounts(cleaned); err != nil {
+			log.Printf("send accounts to join exchange: %v", err)
+			n.mu.Lock()
+			n.clientPending[batch.ClientID]--
+			n.cond.Broadcast()
+			n.mu.Unlock()
+			nack()
+			return
+		}
+		n.mu.Lock()
+		n.clientPending[batch.ClientID]--
+		n.cond.Broadcast()
+		n.mu.Unlock()
+		ack()
+		return
+	}
+
 	if cleaned.Type != protocol.BatchTypeTransactions {
 		n.mu.Lock()
 		n.clientPending[batch.ClientID]--
@@ -186,6 +208,34 @@ func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
 	ack()
 }
 
+func (n *node) publishAccounts(batch protocol.Batch) error {
+	if len(batch.Accounts) == 0 || n.accountsJoin == nil {
+		return nil
+	}
+	grouped := make(map[string][]protocol.Account)
+	for _, account := range batch.Accounts {
+		grouped[account.BankID] = append(grouped[account.BankID], account)
+	}
+	for bankID, accounts := range grouped {
+		partition := worker.PartitionForKey(bankID, n.joinParts)
+		routingKey := worker.RoutingKey(n.joinPrefix, partition)
+		outBatch := protocol.Batch{
+			Type:     protocol.BatchTypeAccounts,
+			ClientID: batch.ClientID,
+			DataType: "accounts",
+			Accounts: accounts,
+		}
+		data, err := json.Marshal(outBatch)
+		if err != nil {
+			return err
+		}
+		if err := n.accountsJoin.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // handleEOF is the callback for EOF signals arriving on the broadcast exchange.
 // It blocks until all in-flight data messages for the same client are drained,
 // then forwards the EOF to downstream consumers.
@@ -221,7 +271,35 @@ func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
 		nack()
 		return
 	}
+
+	if err := n.broadcastAccountsEOF(batch.ClientID); err != nil {
+		log.Printf("send EOF to accounts join exchange: %v", err)
+		nack()
+		return
+	}
 	ack()
+}
+
+func (n *node) broadcastAccountsEOF(clientID string) error {
+	if n.accountsJoin == nil {
+		return nil
+	}
+	outBatch := protocol.Batch{
+		Type:     protocol.BatchTypeEOF,
+		ClientID: clientID,
+		DataType: "accounts",
+	}
+	data, err := json.Marshal(outBatch)
+	if err != nil {
+		return err
+	}
+	for partition := 0; partition < n.joinParts; partition++ {
+		routingKey := worker.RoutingKey(n.joinPrefix, partition)
+		if err := n.accountsJoin.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func envOrDefault(key, def string) string {
@@ -298,7 +376,21 @@ func main() {
 	}
 	defer eofProducer.Close()
 
-	n := newNode(producer, eofBroadcast, eofProducer)
+	accountsJoinExchange := envOrDefault("ACCOUNTS_JOIN_EXCHANGE", "joiner_q2")
+	accountsJoinPrefix := envOrDefault("ACCOUNTS_JOIN_KEY_PREFIX", "join")
+	accountsJoinPartsStr := envOrDefault("ACCOUNTS_JOIN_PARTITIONS", "1")
+	accountsJoinParts, err := strconv.Atoi(accountsJoinPartsStr)
+
+	if err != nil {
+		log.Fatalf("invalid ACCOUNTS_JOIN_PARTITIONS %q: %v", accountsJoinPartsStr, err)
+	}
+	accountsJoin, err := middleware.CreateExchangeMiddleware(accountsJoinExchange, []string{}, connSettings)
+	if err != nil {
+		log.Fatalf("connect to accounts join exchange %q: %v", accountsJoinExchange, err)
+	}
+	defer accountsJoin.Close()
+
+	n := newNode(producer, eofBroadcast, eofProducer, accountsJoin, accountsJoinPrefix, accountsJoinParts)
 
 	log.Printf("cleaner %d/%d started: %s -> %s%v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
 

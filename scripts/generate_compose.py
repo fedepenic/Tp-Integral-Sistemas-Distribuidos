@@ -89,6 +89,7 @@ SERVICES = [
         "INPUT_QUEUE":        "raw_transactions",
         "OUTPUT_EXCHANGE":    "transactions_clean",
         "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
+        "ACCOUNTS_JOIN_EXCHANGE": "join_q2_input",
         # EOFs go through OUTPUT_EXCHANGE (single-queue mode for usd_filter)
         # AND through EOF_OUTPUT_EXCHANGE (dual-queue mode for period1_q5_filter).
         "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
@@ -111,7 +112,7 @@ AGGREGATORS = [
         {
             "INPUT_EXCHANGE":       "usd_for_q2",
             "INPUT_KEY_PREFIX":     "maxbank",
-            "OUTPUT_QUEUE":         "q2_data",
+            "OUTPUT_EXCHANGE":      "join_q2_input",
             "EOF_CONTROL_EXCHANGE": "eof_usd_for_q2",
             "EOF_CONTROL_KEY":      "max_per_bank",
         }
@@ -177,6 +178,22 @@ AGGREGATORS = [
         },
     ),
 ]
+JOINERS = [
+    (
+        "join_q2",
+        "cmd/joiners/join_q2/Dockerfile",
+        "N_JOIN_Q2",
+        {
+            "INPUT_EXCHANGE": "join_q2_input",
+
+            "OUTPUT_QUEUE": "q2_data",
+
+            "EOF_CONTROL_EXCHANGE": "eof_join_q2",
+            "EOF_CONTROL_KEY_PREFIX": "join_q2",
+
+        },
+    ),
+]
 
 def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "usd_filter":
@@ -203,9 +220,14 @@ def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     return {}
 
 def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "max_per_bank":
+        return {
+            "OUTPUT_KEY_PREFIX": env.get("PREFERIX_JOIN_Q2", "joinq2"),
+            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q2", "1"),
+        }
     if name == "avg_per_payment_format":
         return {
-            "OUTPUT_KEY_PREFIX":     env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
+            "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
             "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
         }
 
@@ -222,6 +244,30 @@ def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         }
 
     return {}
+
+
+def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "join_q2":
+        return {
+            "INPUT_KEY_PREFIX":  env.get("PREFERIX_JOIN_Q2", "joinq2"),
+
+            "ACCOUNTS_UPSTREAM_INSTANCES": env.get("N_CLEANERS", "1"),
+            "MAX_PER_BANK_UPSTREAM_INSTANCES": env.get("N_MAXBANK", "1"),
+        }
+
+    return {}
+
+
+def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "cleaner":
+        return {
+            "ACCOUNTS_JOIN_KEY_PREFIX" : env.get("PREFERIX_JOIN_Q2", "joinq2"),
+            "ACCOUNTS_JOIN_PARTITIONS":  env.get("N_JOIN_Q2", "1"),
+        }
+
+    return {}
+
+
 
 def build_compose(env: dict[str, str]) -> str:
     lines = ["services:"]
@@ -286,6 +332,10 @@ def build_compose(env: dict[str, str]) -> str:
 
     for name, dockerfile, env_var, extra_env in SERVICES:
         count = int(env.get(env_var, 1))
+
+        env_map = dict(extra_env)
+        env_map.update(services_extra_env(name, env))
+
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -296,7 +346,7 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - INSTANCE_TOTAL={count}")
             lines.append(f"      - RABBITMQ_HOST=rabbitmq")
             lines.append(f"      - RABBITMQ_PORT=5672")
-            for k, v in extra_env.items():
+            for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
@@ -332,6 +382,47 @@ def build_compose(env: dict[str, str]) -> str:
                 if k == "INPUT_KEY_PREFIX":
                     continue
                 lines.append(f"      - {k}={v}")
+
+            lines.append(f"    depends_on:")
+            lines.append(f"      rabbitmq:")
+            lines.append(f"        condition: service_healthy")
+            lines.append("")
+
+    # Joiners
+    for name, dockerfile, count_env_var, extra_env in JOINERS:
+        count = int(env.get(count_env_var, 1))
+        env_map = dict(extra_env)
+        env_map.update(joiners_extra_env(name, env))
+
+        for i in range(1, count + 1):
+            lines.append(f"  {name}_{i}:")
+            lines.append(f"    build:")
+            lines.append(f"      context: .")
+            lines.append(f"      dockerfile: {dockerfile}")
+            lines.append(f"    environment:")
+            lines.append(f"      - INSTANCE_ID={i}")
+            lines.append(f"      - INSTANCE_TOTAL={count}")
+            lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+            lines.append(f"      - RABBITMQ_PORT=5672")
+
+            input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
+            eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
+
+            if input_prefix:
+                lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
+
+            if eof_prefix:
+                lines.append(f"      - EOF_CONTROL_KEY={eof_prefix}_{i}")
+
+            for k, v in env_map.items():
+                if k in ("INPUT_KEY_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
+                    continue
+
+                if v in env:
+                    v = env[v]
+
+                lines.append(f"      - {k}={v}")
+
 
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
