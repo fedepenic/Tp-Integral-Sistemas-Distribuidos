@@ -35,10 +35,14 @@ var currencyNameToCode = map[string]string{
 	"Yuan":              "CNY",
 }
 
-// staticRates is a fallback for currencies not supported by the Frankfurter API (e.g. Bitcoin).
-// Bitcoin rate as of 2026-05-20: 1 BTC = 77687.42 USD.
-var staticRates = map[string]float64{
-	"Bitcoin": 77687.42,
+// bitcoinRates stores daily BTC→USD rates for the analysis window.
+// Source: investing.com (same values used by the notebook).
+var bitcoinRates = map[string]float64{
+	"2022-09-01": 19793.1,
+	"2022-09-02": 199999.0,
+	"2022-09-03": 19831.4,
+	"2022-09-04": 19952.7,
+	"2022-09-05": 20126.1,
 }
 
 type frankfurterRate struct {
@@ -74,8 +78,11 @@ func (c *converter) rateToUSD(currency, date string) (float64, error) {
 	if currency == "US Dollar" {
 		return 1.0, nil
 	}
-	if rate, ok := staticRates[currency]; ok {
-		return rate, nil
+	if currency == "Bitcoin" {
+		if rate, ok := bitcoinRates[date]; ok {
+			return rate, nil
+		}
+		return 0, fmt.Errorf("no Bitcoin rate for date %s", date)
 	}
 	code, ok := currencyNameToCode[currency]
 	if !ok {
