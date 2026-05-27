@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -33,6 +35,9 @@ import (
 func main() {
 	conn := config.ConnSettings()
 
+	instanceID := config.MustEnvInt("INSTANCE_ID")
+	instanceTotal := config.MustEnvInt("INSTANCE_TOTAL")
+
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
@@ -44,6 +49,8 @@ func main() {
 
 	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
 	defer eofOutMW.Close()
+
+	log.Printf("lower_than_avg_filter %d/%d started", instanceID, instanceTotal)
 
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool {

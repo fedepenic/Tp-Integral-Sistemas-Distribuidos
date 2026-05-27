@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -46,19 +49,32 @@ func main() {
 	outputPrefix := config.MustEnv("OUTPUT_PREFIX")
 	outputPartitions := config.MustEnvInt("OUTPUT_PARTITIONS")
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	instanceID := config.MustEnvInt("INSTANCE_ID")
+	instanceTotal := config.MustEnvInt("INSTANCE_TOTAL")
+
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
+
+	allEOFKeys := make([]string, instanceTotal)
+	for i := 0; i < instanceTotal; i++ {
+		allEOFKeys[i] = fmt.Sprintf("period2_filter_%d", i+1)
+	}
+	eofBroadcast := config.Exchange("EOF_BROADCAST_EXCHANGE", allEOFKeys, conn)
+	defer eofBroadcast.Close()
+
+	ownKey := fmt.Sprintf("period2_filter_%d", instanceID)
+	eofReceiver, err := middleware.CreateExchangeMiddleware(config.MustEnv("EOF_BROADCAST_EXCHANGE"), []string{ownKey}, conn)
+	if err != nil {
+		log.Fatalf("connect to EOF receiver exchange: %v", err)
+	}
+	defer eofReceiver.Close()
 
 	outputMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
+	log.Printf("period2_filter %d/%d started", instanceID, instanceTotal)
 
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
-
-	filterworker.NewWorker(
+	filterworker.NewWorkerCoordinated(
 		func(t protocol.Transaction) bool {
 			ts, err := time.Parse(dateLayout, t.Timestamp[:10])
 			if err != nil {
@@ -72,11 +88,12 @@ func main() {
 				GetBusinessKey: func(t protocol.Transaction) string { return t.PaymentFormat },
 				RoutingPrefix:  outputPrefix,
 				Partitions:     outputPartitions,
-				EOFMiddleware:  eofOutMW,
+				EOFMiddleware:  outputMW,
 			},
 		},
 		inputMW,
-		eofInMW,
+		eofBroadcast,
+		eofReceiver,
 		config.UpstreamCount(),
 	).Run()
 }

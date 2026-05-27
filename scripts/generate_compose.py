@@ -11,6 +11,7 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
+    ("2", "q2_data", "eof_q2_data", "N_MAXBANK"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -36,11 +37,10 @@ NAMED_FILTERS = [
         "OUTPUT_QUEUE":           "q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":         "usd_for_q3p2",
+        "INPUT_QUEUE_NAME":         "period2_filter_input",
+        "INPUT_EXCHANGE":           "usd_filtered",
+        "EOF_BROADCAST_EXCHANGE": "period2_filter_eof",
         "OUTPUT_DIRECT_EXCHANGE":        "usd_period2",
-        "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
-        "EOF_INPUT_KEY":       "eof_period2_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_usd_period2",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
         "INPUT_QUEUE":           "usd_for_p1",
@@ -339,7 +339,7 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append("")
 
     # Sinks — always single-instance, one per query
-    for query_id, input_queue, upstream_env_var in SINKS:
+    for query_id, input_queue, eof_exchange, upstream_env_var in SINKS:
         upstream = int(env.get(upstream_env_var, 1))
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
@@ -348,6 +348,7 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"    environment:")
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
+        lines.append(f"      - EOF_EXCHANGE={eof_exchange}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
         lines.append(f"      - UPSTREAM_TOTAL={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
@@ -56,6 +57,9 @@ func main() {
 	end, _ := time.Parse(dateLayout, "2022-09-05")
 	end = end.Add(24 * time.Hour)
 
+	instanceID := config.MustEnvInt("INSTANCE_ID")
+	instanceTotal := config.MustEnvInt("INSTANCE_TOTAL")
+
 	q3Prefix := config.MustEnv("OUTPUT_Q3_PREFIX")
 	q3Partitions := config.MustEnvInt("OUTPUT_Q3_PARTITIONS")
 
@@ -88,6 +92,8 @@ func main() {
 
 	eofFIMW := config.Exchange("EOF_Q4_FI_EXCHANGE", []string{""}, conn)
 	defer eofFIMW.Close()
+
+	log.Printf("period1_filter %d/%d started", instanceID, instanceTotal)
 
 	filterworker.NewWorker(
 		func(t protocol.Transaction) bool {

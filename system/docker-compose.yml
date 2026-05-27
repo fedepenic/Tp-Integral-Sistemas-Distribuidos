@@ -61,7 +61,7 @@ services:
       - OUTPUT_EXCHANGE=transactions_clean
       - OUTPUT_KEYS=txn_for_usd,txn_for_q5
       - EOF_OUTPUT_EXCHANGE=eof_cleaner
-      - EOF_OUTPUT_KEYS=usd_filter,period1_q5_filter
+      - EOF_OUTPUT_KEYS=period1_q5_filter
       - EOF_EXCHANGE=cleaner_eof
     depends_on:
       rabbitmq:
@@ -205,7 +205,7 @@ services:
     environment:
       - QUERY_ID=1
       - INPUT_QUEUE=q1_data
-      - EOF_INPUT_EXCHANGE=eof_q1_data
+      - EOF_EXCHANGE=eof_q1_data
       - OUTPUT_QUEUE=reports
       - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
@@ -221,7 +221,7 @@ services:
     environment:
       - QUERY_ID=2
       - INPUT_QUEUE=q2_data
-      - EOF_INPUT_EXCHANGE=eof_q2_data
+      - EOF_EXCHANGE=eof_q2_data
       - OUTPUT_QUEUE=reports
       - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
@@ -242,14 +242,12 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE_NAME=usd_filter_input
       - INPUT_EXCHANGE=transactions_clean
       - INPUT_KEY=txn_for_usd
+      - EOF_BROADCAST_EXCHANGE=usd_filter_eof
       - OUTPUT_FANOUT_EXCHANGE=usd_filtered
       - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
-      - EOF_INPUT_EXCHANGE=eof_cleaner
-      - EOF_INPUT_KEY=usd_filter
-      - EOF_FANOUT_EXCHANGE=eof_usd_filtered
-      - EOF_DIRECT_EXCHANGE=eof_usd_for_q2
       - OUTPUT_DIRECT_PREFIX=maxbank
       - OUTPUT_DIRECT_PARTITIONS=1
     depends_on:
@@ -268,11 +266,10 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=1
+      - INPUT_QUEUE_NAME=amt50_filter_input
       - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=amt50_filter_eof
       - OUTPUT_QUEUE=q1_data
-      - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=amt50_filter
-      - EOF_OUTPUT_EXCHANGE=eof_q1_data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -289,11 +286,10 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=1
-      - INPUT_QUEUE=usd_for_q3p2
+      - INPUT_QUEUE_NAME=period2_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=period2_filter_eof
       - OUTPUT_DIRECT_EXCHANGE=usd_period2
-      - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=period2_filter
-      - EOF_OUTPUT_EXCHANGE=eof_usd_period2
       - OUTPUT_PREFIX=joinerformat
       - OUTPUT_PARTITIONS=1
     depends_on:
@@ -317,7 +313,7 @@ services:
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
       - EOF_INPUT_EXCHANGE=eof_usd_filtered
-      - EOF_INPUT_KEY=period1_filter
+      - EOF_INPUT_KEY=eof_period1_filter
       - EOF_Q3_EXCHANGE=eof_usd_period1_for_q3
       - EOF_Q4_FO_EXCHANGE=eof_usd_period1_for_q4_fo
       - EOF_Q4_FI_EXCHANGE=eof_usd_period1_for_q4_fi
