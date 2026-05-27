@@ -1,4 +1,3 @@
-// cmd/joiners/join_q2/main.go
 package main
 
 import (

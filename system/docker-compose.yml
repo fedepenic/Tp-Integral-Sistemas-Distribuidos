@@ -197,10 +197,11 @@ services:
       - INSTANCE_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - EOF_CONTROL_KEY=join_q2_1
+      - INPUT_KEY=joinq2_0
       - INPUT_EXCHANGE=join_q2_input
       - OUTPUT_QUEUE=q2_data
       - EOF_CONTROL_EXCHANGE=eof_join_q2
+      - EOF_CONTROL_KEY_PREFIX=join_q2
       - ACCOUNTS_UPSTREAM_INSTANCES=1
       - MAX_PER_BANK_UPSTREAM_INSTANCES=1
     depends_on:

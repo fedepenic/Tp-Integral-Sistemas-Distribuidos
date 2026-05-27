@@ -185,6 +185,7 @@ JOINERS = [
         "N_JOIN_Q2",
         {
             "INPUT_EXCHANGE": "join_q2_input",
+            "INPUT_KEY_PREFIX": "joinq2",
 
             "OUTPUT_QUEUE": "q2_data",
 
@@ -249,8 +250,6 @@ def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
 def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "join_q2":
         return {
-            "INPUT_KEY_PREFIX":  env.get("PREFERIX_JOIN_Q2", "joinq2"),
-
             "ACCOUNTS_UPSTREAM_INSTANCES": env.get("N_CLEANERS", "1"),
             "MAX_PER_BANK_UPSTREAM_INSTANCES": env.get("N_MAXBANK", "1"),
         }
@@ -394,6 +393,8 @@ def build_compose(env: dict[str, str]) -> str:
         env_map = dict(extra_env)
         env_map.update(joiners_extra_env(name, env))
 
+        input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
+
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -405,21 +406,13 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - RABBITMQ_HOST=rabbitmq")
             lines.append(f"      - RABBITMQ_PORT=5672")
 
-            input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
-            eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
 
             if input_prefix:
                 lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
 
-            if eof_prefix:
-                lines.append(f"      - EOF_CONTROL_KEY={eof_prefix}_{i}")
-
             for k, v in env_map.items():
-                if k in ("INPUT_KEY_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
+                if k == "INPUT_KEY_PREFIX":
                     continue
-
-                if v in env:
-                    v = env[v]
 
                 lines.append(f"      - {k}={v}")
 

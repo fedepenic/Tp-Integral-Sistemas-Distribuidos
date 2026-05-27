@@ -13,6 +13,7 @@ import (
 const (
 	accountsDataType   = "accounts"
 	maxPerBankDataType = "max_per_bank"
+	defaultClientID    = "default"
 )
 
 type JoinQ2 struct {
