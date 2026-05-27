@@ -10,6 +10,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
+const chunkSize = 500
+
 type AggregatorWorker[T any, K comparable, S any, O any] struct {
 	/// T = Tipo de item de entrada
 	/// K = Tipo de clave de agregacion
@@ -276,15 +278,52 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	state := task.State
 	w.stateMu.Unlock()
 
-	var results []O
+	partitioned := make(map[int][]O)
 	for key, value := range state {
-		results = append(results, w.logic.Finalize(key, value)...)
+		results := w.logic.Finalize(key, value)
+		for _, result := range results {
+			partitionKey := w.resultKey(result)
+			partition := PartitionForKey(
+				partitionKey,
+				w.cfg.OutputPartitions,
+			)
+			partitioned[partition] = append(
+				partitioned[partition],
+				result,
+			)
+			if len(partitioned[partition]) >= chunkSize {
+				routingKey := RoutingKey(
+					w.cfg.OutputKeyPrefix,
+					partition,
+				)
+				if err := w.sendPartition(
+					clientID,
+					partitioned[partition],
+					routingKey,
+				); err != nil {
+					return err
+				}
+				partitioned[partition] = nil
+			}
+		}
 	}
-
-	if err := w.sendResults(clientID, results); err != nil {
-		return err
+	for partition, results := range partitioned {
+		if len(results) == 0 {
+			continue
+		}
+		routingKey := RoutingKey(
+			w.cfg.OutputKeyPrefix,
+			partition,
+		)
+		if err := w.sendPartition(
+			clientID,
+			results,
+			routingKey,
+		); err != nil {
+			return err
+		}
 	}
-	log.Printf("[aggregator] flushed results for client %s: %d records", clientID, len(results))
+	log.Printf("[aggregator] flushed results for client %s", clientID)
 	if err := w.sendEOF(clientID); err != nil {
 		return err
 	}
@@ -294,6 +333,31 @@ func (w *AggregatorWorker[T, K, S, O]) flush(clientID string) error {
 	delete(w.taskStates, clientID)
 	w.stateMu.Unlock()
 	return nil
+}
+
+func (w *AggregatorWorker[T, K, S, O]) sendPartition(
+	clientID string,
+	results []O,
+	routingKey string,
+) error {
+	if len(results) == 0 {
+		return nil
+	}
+	dataType := w.cfg.DataType
+	if dataType == "" {
+		dataType = "unknown"
+	}
+	records, err := json.Marshal(results)
+	if err != nil {
+		return fmt.Errorf("marshal records: %w", err)
+	}
+	outBatch := protocol.Batch{
+		Type:     protocol.BatchTypeData,
+		ClientID: clientID,
+		DataType: dataType,
+		Records:  records,
+	}
+	return w.sendResultBatch(outBatch, routingKey)
 }
 
 func (w *AggregatorWorker[T, K, S, O]) sendResults(clientID string, results []O) error {

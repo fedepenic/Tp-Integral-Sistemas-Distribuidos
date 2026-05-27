@@ -14,6 +14,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
+const accountsBatchSize = 500
+
 // node holds shared state between the data consumer goroutine and the EOF
 // receiver goroutine, following the same coordination pattern used by the
 // currency converter.
@@ -212,28 +214,103 @@ func (n *node) publishAccounts(batch protocol.Batch) error {
 	if len(batch.Accounts) == 0 || n.accountsJoin == nil {
 		return nil
 	}
-	grouped := make(map[string][]protocol.Account)
+
+	partitioned := make(map[int][]protocol.Account)
+
 	for _, account := range batch.Accounts {
-		grouped[account.BankID] = append(grouped[account.BankID], account)
+		partition := worker.PartitionForKey(
+			account.BankID,
+			n.joinParts,
+		)
+		partitioned[partition] = append(
+			partitioned[partition],
+			account,
+		)
+
+		if len(partitioned[partition]) >= accountsBatchSize {
+			if err := n.flushPartition(
+				batch.ClientID,
+				partition,
+				partitioned,
+			); err != nil {
+				return err
+			}
+		}
 	}
-	for bankID, accounts := range grouped {
-		partition := worker.PartitionForKey(bankID, n.joinParts)
-		routingKey := worker.RoutingKey(n.joinPrefix, partition)
-		outBatch := protocol.Batch{
-			Type:     protocol.BatchTypeAccounts,
-			ClientID: batch.ClientID,
-			DataType: "accounts",
-			Accounts: accounts,
-		}
-		data, err := json.Marshal(outBatch)
-		if err != nil {
-			return err
-		}
-		if err := n.accountsJoin.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
-			return err
-		}
+
+	return n.flushRemainingPartitions(
+		batch.ClientID,
+		partitioned,
+	)
+}
+
+func (n *node) flushPartition(
+	clientID string,
+	partition int,
+	partitioned map[int][]protocol.Account,
+) error {
+	accounts := partitioned[partition]
+	if len(accounts) == 0 {
+		return nil
 	}
+	if err := n.sendAccountsBatch(
+		clientID,
+		partition,
+		accounts,
+	); err != nil {
+		return err
+	}
+
+	partitioned[partition] = nil
 	return nil
+}
+
+func (n *node) flushRemainingPartitions(
+	clientID string,
+	partitioned map[int][]protocol.Account,
+) error {
+
+	for partition := range partitioned {
+
+		if err := n.flushPartition(
+			clientID,
+			partition,
+			partitioned,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (n *node) sendAccountsBatch(
+	clientID string,
+	partition int,
+	accounts []protocol.Account,
+) error {
+	routingKey := worker.RoutingKey(
+		n.joinPrefix,
+		partition,
+	)
+
+	outBatch := protocol.Batch{
+		Type:     protocol.BatchTypeAccounts,
+		ClientID: clientID,
+		DataType: "accounts",
+		Accounts: accounts,
+	}
+
+	data, err := json.Marshal(outBatch)
+	if err != nil {
+		return err
+	}
+	return n.accountsJoin.SendWithKey(
+		middleware.Message{
+			Body: string(data),
+		},
+		routingKey,
+	)
 }
 
 // handleEOF is the callback for EOF signals arriving on the broadcast exchange.
