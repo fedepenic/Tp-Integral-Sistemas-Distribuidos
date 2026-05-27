@@ -1,41 +1,14 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
-	"os"
-	"strconv"
 	"strings"
-	"sync"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
-
-// node holds shared state between the data consumer goroutine and the EOF
-// receiver goroutine, following the same coordination pattern used by the
-// currency converter.
-type node struct {
-	producer     middleware.Middleware
-	eofBroadcast middleware.Middleware
-	mu           sync.Mutex
-	cond         *sync.Cond
-	// globalPending counts messages dequeued but not yet deserialized (clientID unknown).
-	globalPending int
-	// clientPending counts messages currently being processed per client.
-	clientPending map[string]int
-}
-
-func newNode(producer, eofBroadcast middleware.Middleware) *node {
-	n := &node{
-		producer:      producer,
-		eofBroadcast:  eofBroadcast,
-		clientPending: make(map[string]int),
-	}
-	n.cond = sync.NewCond(&n.mu)
-	return n
-}
 
 // cleanTransactions drops incomplete or malformed transactions and strips the
 // IsLaundering label, which is not used by any downstream query.
@@ -85,206 +58,43 @@ func cleanAccounts(accounts []protocol.Account) []protocol.Account {
 	return out
 }
 
-func cleanBatch(batch protocol.Batch) protocol.Batch {
-	out := protocol.Batch{
-		Type:     batch.Type,
-		ClientID: batch.ClientID,
-	}
-	switch batch.Type {
-	case protocol.BatchTypeTransactions:
-		out.Transactions = cleanTransactions(batch.Transactions)
-	case protocol.BatchTypeAccounts:
-		out.Accounts = cleanAccounts(batch.Accounts)
-	}
-	return out
-}
-
-func (n *node) handleData(msg middleware.Message, ack func(), nack func()) {
-	// Increment globalPending before deserialization so the EOF handler cannot
-	// slip through while the clientID of this message is still unknown.
-	n.mu.Lock()
-	n.globalPending++
-	n.mu.Unlock()
-
-	var batch protocol.Batch
-	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
-		log.Printf("unmarshal batch: %v — discarding", err)
-		n.mu.Lock()
-		n.globalPending--
-		n.cond.Broadcast()
-		n.mu.Unlock()
-		ack()
-		return
-	}
-
-	if batch.Type == protocol.BatchTypeEOF {
-		n.mu.Lock()
-		n.globalPending--
-		n.cond.Broadcast()
-		n.mu.Unlock()
-		if err := n.eofBroadcast.Send(msg); err != nil {
-			log.Printf("broadcast EOF: %v", err)
-			nack()
-			return
-		}
-		ack()
-		return
-	}
-
-	// Move the message from globalPending to clientPending atomically so it is
-	// never invisible to both counters at the same time.
-	n.mu.Lock()
-	n.globalPending--
-	n.clientPending[batch.ClientID]++
-	n.mu.Unlock()
-
-	log.Printf("cleaner: batch received client=%s type=%s txns=%d accounts=%d", batch.ClientID, batch.Type, len(batch.Transactions), len(batch.Accounts))
-
-	cleaned := cleanBatch(batch)
-
-	log.Printf("cleaner: batch cleaned client=%s type=%s in=%d out=%d", batch.ClientID, batch.Type, len(batch.Transactions)+len(batch.Accounts), len(cleaned.Transactions)+len(cleaned.Accounts))
-
-	// Account batches are cleaned and acked but not forwarded: no current
-	// downstream consumer needs them, and forwarding them would just clog
-	// the transaction filters' queues.
-	if cleaned.Type != protocol.BatchTypeTransactions {
-		n.mu.Lock()
-		n.clientPending[batch.ClientID]--
-		n.cond.Broadcast()
-		n.mu.Unlock()
-		ack()
-		return
-	}
-
-	data, err := json.Marshal(cleaned)
-	if err != nil {
-		log.Printf("marshal cleaned batch: %v", err)
-		n.mu.Lock()
-		n.clientPending[batch.ClientID]--
-		n.cond.Broadcast()
-		n.mu.Unlock()
-		nack()
-		return
-	}
-
-	if err := n.producer.Send(middleware.Message{Body: string(data)}); err != nil {
-		log.Printf("send to output exchange: %v", err)
-		n.mu.Lock()
-		n.clientPending[batch.ClientID]--
-		n.cond.Broadcast()
-		n.mu.Unlock()
-		nack()
-		return
-	}
-
-	n.mu.Lock()
-	n.clientPending[batch.ClientID]--
-	n.cond.Broadcast()
-	n.mu.Unlock()
-	ack()
-}
-
-// handleEOF is the callback for EOF signals arriving on the broadcast exchange.
-// It blocks until all in-flight data messages for the same client are drained,
-// then forwards the EOF inline through the data exchange (transactions_clean).
-// All downstream filters receive EOFs in the same queue as data, FIFO.
-func (n *node) handleEOF(msg middleware.Message, ack func(), nack func()) {
-	var batch protocol.Batch
-	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
-		log.Printf("unmarshal EOF broadcast: %v — discarding", err)
-		ack()
-		return
-	}
-
-	n.mu.Lock()
-	for n.globalPending > 0 || n.clientPending[batch.ClientID] > 0 {
-		n.cond.Wait()
-	}
-	n.mu.Unlock()
-
-	if err := n.producer.Send(msg); err != nil {
-		log.Printf("send EOF to data exchange: %v", err)
-		nack()
-		return
-	}
-	ack()
-}
-
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 func main() {
-	inputQueue       := envOrDefault("INPUT_QUEUE", "raw_transactions")
-	outputExchange   := envOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
-	outputKeys       := strings.Split(envOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
-	host             := envOrDefault("RABBITMQ_HOST", "rabbitmq")
-	portStr          := envOrDefault("RABBITMQ_PORT", "5672")
-	instanceIDStr    := envOrDefault("INSTANCE_ID", "1")
-	instanceTotalStr := envOrDefault("INSTANCE_TOTAL", "1")
-	eofExchange      := envOrDefault("EOF_EXCHANGE", "cleaner_eof")
+	svc := node.New("cleaner")
+	conn := svc.Conn()
 
-	port, err := strconv.Atoi(portStr)
+	inputQueue     := config.EnvOrDefault("INPUT_QUEUE", "raw_transactions")
+	outputExchange := config.EnvOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
+	outputKeys     := strings.Split(config.EnvOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
+
+	inputMW, err := middleware.CreateQueueMiddleware(inputQueue, conn)
 	if err != nil {
-		log.Fatalf("invalid RABBITMQ_PORT %q: %v", portStr, err)
+		log.Fatalf("[cleaner] connect to input queue: %v", err)
 	}
-	instanceID, err := strconv.Atoi(instanceIDStr)
+	defer inputMW.Close()
+
+	outputMW, err := middleware.CreateExchangeMiddleware(outputExchange, outputKeys, conn)
 	if err != nil {
-		log.Fatalf("invalid INSTANCE_ID %q: %v", instanceIDStr, err)
+		log.Fatalf("[cleaner] connect to output exchange: %v", err)
 	}
-	instanceTotal, err := strconv.Atoi(instanceTotalStr)
-	if err != nil {
-		log.Fatalf("invalid INSTANCE_TOTAL %q: %v", instanceTotalStr, err)
-	}
+	defer outputMW.Close()
 
-	connSettings := middleware.ConnSettings{Hostname: host, Port: port}
+	svc.Run(inputMW, outputMW, func(batch protocol.Batch) (protocol.Batch, bool) {
+		log.Printf("[cleaner] client=%s type=%s txns=%d accounts=%d", batch.ClientID, batch.Type, len(batch.Transactions), len(batch.Accounts))
 
-	allEOFKeys := make([]string, instanceTotal)
-	for i := 0; i < instanceTotal; i++ {
-		allEOFKeys[i] = fmt.Sprintf("cleaner_%d", i+1)
-	}
-	ownKey := fmt.Sprintf("cleaner_%d", instanceID)
-
-	consumer, err := middleware.CreateQueueMiddleware(inputQueue, connSettings)
-	if err != nil {
-		log.Fatalf("connect to input queue %q: %v", inputQueue, err)
-	}
-	defer consumer.Close()
-
-	producer, err := middleware.CreateExchangeMiddleware(outputExchange, outputKeys, connSettings)
-	if err != nil {
-		log.Fatalf("connect to output exchange %q: %v", outputExchange, err)
-	}
-	defer producer.Close()
-
-	// eofBroadcast publishes to ALL instance keys so every sibling receives the EOF.
-	eofBroadcast, err := middleware.CreateExchangeMiddleware(eofExchange, allEOFKeys, connSettings)
-	if err != nil {
-		log.Fatalf("connect to EOF broadcast exchange: %v", err)
-	}
-	defer eofBroadcast.Close()
-
-	// eofReceiver subscribes only to this instance's own routing key.
-	eofReceiver, err := middleware.CreateExchangeMiddleware(eofExchange, []string{ownKey}, connSettings)
-	if err != nil {
-		log.Fatalf("connect to EOF receiver exchange: %v", err)
-	}
-	defer eofReceiver.Close()
-
-	n := newNode(producer, eofBroadcast)
-
-	log.Printf("cleaner %d/%d started: %s -> %s%v", instanceID, instanceTotal, inputQueue, outputExchange, outputKeys)
-
-	go func() {
-		if err := eofReceiver.StartConsuming(n.handleEOF); err != nil {
-			log.Fatalf("consuming from EOF exchange: %v", err)
+		cleaned := protocol.Batch{Type: batch.Type, ClientID: batch.ClientID}
+		switch batch.Type {
+		case protocol.BatchTypeTransactions:
+			cleaned.Transactions = cleanTransactions(batch.Transactions)
+		case protocol.BatchTypeAccounts:
+			cleaned.Accounts = cleanAccounts(batch.Accounts)
 		}
-	}()
 
-	if err := consumer.StartConsuming(n.handleData); err != nil {
-		log.Fatalf("consuming from %s: %v", inputQueue, err)
-	}
+		log.Printf("[cleaner] client=%s type=%s in=%d out=%d", batch.ClientID, batch.Type, len(batch.Transactions)+len(batch.Accounts), len(cleaned.Transactions)+len(cleaned.Accounts))
+
+		// Account batches are not forwarded: no downstream consumer needs them.
+		if cleaned.Type != protocol.BatchTypeTransactions {
+			return protocol.Batch{}, false
+		}
+		return cleaned, true
+	})
 }
