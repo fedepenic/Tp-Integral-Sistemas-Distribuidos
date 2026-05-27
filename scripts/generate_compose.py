@@ -84,7 +84,8 @@ SERVICES = [
         "RABBITMQ_PORT":   "5672",
         "EOF_EXCHANGE":    "cleaner_eof",
     }),
-    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
+    # UPSTREAM_INSTANCES = N_WIREACH_FILTER: each wireach_filter instance sends its own EOF.
+    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {
         "INPUT_QUEUE":  "wireach_txn",
         "OUTPUT_QUEUE": "converted_usd",
         "RABBITMQ_HOST": "rabbitmq",
@@ -154,8 +155,12 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - gateway")
         lines.append("")
 
-    for name, dockerfile, env_var, extra_env in SERVICES:
+    for entry in SERVICES:
+        name, dockerfile, env_var = entry[0], entry[1], entry[2]
+        upstream_env_var = entry[3] if len(entry) > 4 else None
+        extra_env = entry[4] if len(entry) > 4 else entry[3]
         count = int(env.get(env_var, 1))
+        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else None
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -164,6 +169,8 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
+            if upstream is not None:
+                lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
             for k, v in extra_env.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
