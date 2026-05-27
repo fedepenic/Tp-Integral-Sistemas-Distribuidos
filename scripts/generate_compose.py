@@ -12,7 +12,12 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "N_AMT50_FILTER"),
-    ("5", "q5_filtered", "N_USD_LOWER_THAN_ONE"),
+    ("5", "q5_count", "N_COUNTER_Q5"),  # N_COUNTER_Q5 defaults to 1
+]
+
+# (service_name, input_queue, output_queue, upstream_env_var)
+COUNTERS = [
+    ("counter_q5", "q5_filtered", "q5_count", "N_USD_LOWER_THAN_ONE"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -176,6 +181,24 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
             lines.append("")
+
+    # Counters — single instance, aggregate transactions into a count before the sink
+    for svc_name, input_queue, output_queue, upstream_env_var in COUNTERS:
+        upstream = int(env.get(upstream_env_var, 1))
+        lines.append(f"  {svc_name}:")
+        lines.append(f"    build:")
+        lines.append(f"      context: .")
+        lines.append(f"      dockerfile: cmd/counter/Dockerfile")
+        lines.append(f"    environment:")
+        lines.append(f"      - INPUT_QUEUE={input_queue}")
+        lines.append(f"      - OUTPUT_QUEUE={output_queue}")
+        lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
+        lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+        lines.append(f"      - RABBITMQ_PORT=5672")
+        lines.append(f"    depends_on:")
+        lines.append(f"      rabbitmq:")
+        lines.append(f"        condition: service_healthy")
+        lines.append("")
 
     # Sinks — always single-instance, one per query
     for query_id, input_queue, upstream_env_var in SINKS:

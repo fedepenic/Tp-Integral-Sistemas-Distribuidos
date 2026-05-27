@@ -38,42 +38,10 @@ services:
       dockerfile: cmd/client/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=3
+      - INSTANCE_TOTAL=1
       - GATEWAY_HOST=gateway
       - GATEWAY_PORT=8080
       - INPUT_DIR=/data/client_1
-      - BATCH_SIZE=100
-    volumes:
-      - ../input:/data
-    depends_on:
-      - gateway
-
-  client_2:
-    build:
-      context: .
-      dockerfile: cmd/client/Dockerfile
-    environment:
-      - INSTANCE_ID=2
-      - INSTANCE_TOTAL=3
-      - GATEWAY_HOST=gateway
-      - GATEWAY_PORT=8080
-      - INPUT_DIR=/data/client_2
-      - BATCH_SIZE=100
-    volumes:
-      - ../input:/data
-    depends_on:
-      - gateway
-
-  client_3:
-    build:
-      context: .
-      dockerfile: cmd/client/Dockerfile
-    environment:
-      - INSTANCE_ID=3
-      - INSTANCE_TOTAL=3
-      - GATEWAY_HOST=gateway
-      - GATEWAY_PORT=8080
-      - INPUT_DIR=/data/client_3
       - BATCH_SIZE=100
     volumes:
       - ../input:/data
@@ -161,6 +129,20 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  counter_q5:
+    build:
+      context: .
+      dockerfile: cmd/counter/Dockerfile
+    environment:
+      - INPUT_QUEUE=q5_filtered
+      - OUTPUT_QUEUE=q5_count
+      - UPSTREAM_INSTANCES=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   sink_1:
     build:
       context: .
@@ -182,7 +164,7 @@ services:
       dockerfile: cmd/sink/Dockerfile
     environment:
       - QUERY_ID=5
-      - INPUT_QUEUE=q5_filtered
+      - INPUT_QUEUE=q5_count
       - OUTPUT_QUEUE=reports
       - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
