@@ -207,7 +207,7 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
-        lines.append(f"      - UPSTREAM_TOTAL={upstream}")
+        lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
         lines.append(f"    depends_on:")

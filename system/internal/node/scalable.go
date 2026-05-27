@@ -13,43 +13,25 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-// ProcessFunc is the only piece of business logic a scalable node must provide.
-// It receives a data batch and returns the output batch and whether to send it.
-// Return ok=false to discard the batch without sending anything downstream.
-// EOF batches are never passed to ProcessFunc — the node handles them internally.
-type ProcessFunc func(batch protocol.Batch) (result protocol.Batch, ok bool)
-
-// Scalable is a horizontally-scalable pipeline node.
+// Scalable is a horizontally-scalable pipeline node. It embeds Node and
+// extends it with peer-coordination for EOF propagation:
 //
-// All instances compete for messages on a shared input queue. When any instance
-// receives a client EOF it broadcasts it to all peer instances via an internal
-// exchange. Each instance counts received broadcasts per client; once the count
-// reaches UPSTREAM_INSTANCES, that instance drains its in-flight work and
-// forwards one EOF downstream.
+// All instances compete for messages on a shared input queue. When any
+// instance receives a client EOF it broadcasts it to all peer instances.
+// Each instance counts received broadcasts per client; once the count
+// reaches UPSTREAM_INSTANCES, that instance drains its in-flight work
+// and forwards one EOF downstream. Every instance does this, so
+// downstream receives N EOFs — one per running instance.
 //
-// Because every instance does this independently, downstream receives exactly
-// N EOFs per client — one per running instance. UPSTREAM_INSTANCES controls
-// how many upstream broadcasts an instance must collect before it is ready to
-// propagate, not which instance gets to propagate.
-//
-//   - UPSTREAM_INSTANCES = 1 (or not set): propagate on the first broadcast.
-//     Each instance sees exactly one broadcast per client EOF arriving from
-//     upstream (cleaner, currency_converter), so they propagate immediately.
-//   - UPSTREAM_INSTANCES = N: wait for N broadcasts before propagating.
-//     Used when N upstream nodes each send their own EOF per client (e.g.
-//     usd_filter waits for N_CLEANERS=3 cleaner EOFs before propagating).
-//
-// Required environment variables:
+// Additional required environment variables (beyond Node's):
 //
 //	INSTANCE_ID, INSTANCE_TOTAL  — identity within the peer group
-//	UPSTREAM_INSTANCES           — broadcasts to collect before propagating (default 1)
-//	RABBITMQ_HOST, RABBITMQ_PORT
 type Scalable struct {
+	Node // embeds Node: provides Conn(), upstreamCount, and RABBITMQ settings
+
 	name          string
 	instanceID    int
 	instanceTotal int
-	conn          middleware.ConnSettings
-	upstreamCount int
 
 	// in-flight tracking — guarded by mu
 	mu            sync.Mutex
@@ -59,22 +41,14 @@ type Scalable struct {
 	eofCount      map[string]int // broadcasts received per client
 }
 
-// New reads INSTANCE_ID, INSTANCE_TOTAL, UPSTREAM_INSTANCES and RabbitMQ
-// connection settings from the environment.
+// New reads instance identity and connection settings from the environment.
 // name is the service name used to build per-instance peer routing keys.
 func New(name string) *Scalable {
-	upstream := 1
-	if v := os.Getenv("UPSTREAM_INSTANCES"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			upstream = n
-		}
-	}
 	s := &Scalable{
+		Node:          newNode(),
 		name:          name,
 		instanceID:    mustInt("INSTANCE_ID"),
 		instanceTotal: mustInt("INSTANCE_TOTAL"),
-		conn:          config.ConnSettings(),
-		upstreamCount: upstream,
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 	}
@@ -82,17 +56,11 @@ func New(name string) *Scalable {
 	return s
 }
 
-// Conn returns the RabbitMQ connection settings so the caller can build its
-// own input and output middlewares without duplicating the connection setup.
-func (s *Scalable) Conn() middleware.ConnSettings { return s.conn }
-
-// Run sets up the internal EOF broadcast exchange, subscribes this instance to
-// its own receiver queue, and starts both consumer goroutines. It blocks until
-// both goroutines finish (SIGTERM or queue closed).
+// Run sets up the internal EOF broadcast exchange, subscribes this instance
+// to its own receiver queue, and starts both consumer goroutines.
+// It blocks until both goroutines finish (SIGTERM or queue closed).
 //
-// inputMW  — shared input queue (competing consumers across all instances).
-// outputMW — where processed batches and EOFs are written downstream.
-// fn       — the business logic: transforms each incoming data batch.
+// Overrides Node.Run with the full peer-coordination logic.
 func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 	allKeys := make([]string, s.instanceTotal)
 	for i := 0; i < s.instanceTotal; i++ {
@@ -138,13 +106,8 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 	wg.Wait()
 }
 
-// handleData returns the input queue callback.
-// Data batches are passed to fn and the result sent downstream.
-// EOF batches are broadcast to all peer instances.
 func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn ProcessFunc) func(middleware.Message, func(), func()) {
 	return func(msg middleware.Message, ack func(), nack func()) {
-		// Increment before deserialization so the EOF drain cannot slip through
-		// while this message's clientID is still unknown.
 		s.mu.Lock()
 		s.globalPending++
 		s.mu.Unlock()
@@ -161,8 +124,6 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		}
 
 		if batch.Type == protocol.BatchTypeEOF {
-			// Release globalPending before broadcasting so the drain in handleEOF
-			// can complete without waiting on this goroutine.
 			s.mu.Lock()
 			s.globalPending--
 			s.cond.Broadcast()
@@ -176,8 +137,6 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			return
 		}
 
-		// Atomically move from globalPending to clientPending so the message
-		// is never invisible to both counters simultaneously.
 		s.mu.Lock()
 		s.globalPending--
 		s.clientPending[batch.ClientID]++
@@ -222,11 +181,6 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 	}
 }
 
-// handleEOF returns the EOF receiver callback.
-// Each instance counts received broadcasts per client. Once upstreamCount
-// broadcasts have arrived, the instance drains its in-flight work and forwards
-// one EOF downstream. Every instance does this, so downstream receives N EOFs
-// (one per instance of this node).
 func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Message, func(), func()) {
 	return func(msg middleware.Message, ack func(), nack func()) {
 		var batch protocol.Batch
@@ -248,7 +202,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Mes
 			return
 		}
 
-		// All upstream EOFs accounted for — drain in-flight and propagate.
 		s.mu.Lock()
 		for s.globalPending > 0 || s.clientPending[batch.ClientID] > 0 {
 			s.cond.Wait()
@@ -266,13 +219,18 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Mes
 }
 
 func mustInt(key string) int {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("env var %s is required", key)
-	}
+	v := mustEnv(key)
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		log.Fatalf("env var %s must be an integer: %v", key, err)
 	}
 	return n
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("env var %s is required", key)
+	}
+	return v
 }
