@@ -4,12 +4,17 @@ all: build clean-output generate-compose generate-inputs run-notebook run-system
 
 all-notebook: build clean-output generate-inputs run-notebook
 
+all-notebook-local: clean-output-local generate-inputs-local run-notebook-local
+
 all-system: build clean-output generate-compose generate-inputs run-system
 
 clean-output:
 	docker run --rm \
 		-v $(PWD)/output:/app/output \
 		money-laundering python scripts/clean_output.py
+
+clean-output-local:
+	$(PYTHON) scripts/clean_output.py
 
 compare:
 	docker run --rm \
@@ -45,6 +50,10 @@ run-notebook:
 		-v $(PWD)/input:/app/input \
 		-v $(PWD)/output:/app/output \
 		money-laundering python scripts/run_analysis.py
+
+run-notebook-local:
+	mkdir -p output/notebook
+	set -a && . ./.env && $(PYTHON) scripts/run_analysis.py
 
 run-system:
 	docker-compose -f system/docker-compose.yml up --build --remove-orphans
