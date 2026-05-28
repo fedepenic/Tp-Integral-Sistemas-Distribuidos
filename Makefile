@@ -1,3 +1,5 @@
+PYTHON ?= python3.11
+
 all: build clean-output generate-compose generate-inputs run-notebook run-system
 
 all-notebook: build clean-output generate-inputs run-notebook
@@ -31,6 +33,10 @@ generate-inputs:
 		-v $(PWD)/data:/app/data \
 		-v $(PWD)/input:/app/input \
 		money-laundering python scripts/generate_inputs.py
+
+generate-inputs-local:
+	mkdir -p input
+	set -a && . ./.env && $(PYTHON) scripts/generate_inputs.py
 
 run-notebook:
 	mkdir -p output/notebook
