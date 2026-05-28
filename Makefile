@@ -8,6 +8,8 @@ all-notebook-local: clean-output-local generate-inputs-local run-notebook-local
 
 all-system: build clean-output generate-compose generate-inputs run-system
 
+all-system-demo: build generate-compose run-system
+
 clean-output:
 	docker run --rm \
 		-v $(PWD)/output:/app/output \
