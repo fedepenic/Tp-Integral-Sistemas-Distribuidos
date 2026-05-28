@@ -11,8 +11,7 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, eof_exchange, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
-    ("2", "q2_data", "eof_q2_data", "N_JOIN_Q2"),
-    ("3", "q3_data", "eof_q3_data", "N_AMT_AVG_FILTER"),
+    ("2", "q2_data", "eof_q2_data", "N_MAXBANK"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -44,7 +43,8 @@ NAMED_FILTERS = [
         "OUTPUT_DIRECT_EXCHANGE":        "usd_period2",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
-        "INPUT_QUEUE":           "usd_for_p1",
+        "INPUT_EXCHANGE":           "usd_filtered",
+        "INPUT_QUEUE_NAME":       "period1_filter_input",
         "OUTPUT_Q3_EXCHANGE":    "usd_period1_for_q3",
         "OUTPUT_Q4_FO_EXCHANGE": "usd_period1_for_q4_fo",
         "OUTPUT_Q4_FI_EXCHANGE": "usd_period1_for_q4_fi",
@@ -54,7 +54,7 @@ NAMED_FILTERS = [
         "EOF_Q4_FO_EXCHANGE":    "eof_usd_period1_for_q4_fo",
         "EOF_Q4_FI_EXCHANGE":    "eof_usd_period1_for_q4_fi",
     }),
-    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
+    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", None, {
         "INPUT_QUEUE":         "q3_candidates",
         "OUTPUT_QUEUE":        "q3_data",
         "EOF_INPUT_EXCHANGE":  "eof_q3_candidates",
@@ -90,7 +90,6 @@ SERVICES = [
         "INPUT_QUEUE":        "raw_transactions",
         "OUTPUT_EXCHANGE":    "transactions_clean",
         "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
-        "ACCOUNTS_JOIN_EXCHANGE": "join_q2_input",
         # EOFs go through OUTPUT_EXCHANGE (single-queue mode for usd_filter)
         # AND through EOF_OUTPUT_EXCHANGE (dual-queue mode for period1_q5_filter).
         "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
@@ -113,7 +112,7 @@ AGGREGATORS = [
         {
             "INPUT_EXCHANGE":       "usd_for_q2",
             "INPUT_KEY_PREFIX":     "maxbank",
-            "OUTPUT_EXCHANGE":      "join_q2_input",
+            "OUTPUT_QUEUE":         "q2_data",
             "EOF_CONTROL_EXCHANGE": "eof_usd_for_q2",
             "EOF_CONTROL_KEY":      "max_per_bank",
         }
@@ -124,10 +123,10 @@ AGGREGATORS = [
         "N_AVG_PER_PAY",
         "N_PERIOD1_FILTER",
         {
-            "INPUT_EXCHANGE":       "usd_period1_for_q3",
+            "INPUT_EXCHANGE":       "",
             "INPUT_KEY_PREFIX":     "avgfmt",
 
-            "OUTPUT_EXCHANGE":         "avg_per_format",
+            "OUTPUT_EXCHANGE":         "q3_candidates",
 
             "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q3",
             "EOF_CONTROL_KEY":      "avg_per_payment_format",
@@ -179,40 +178,6 @@ AGGREGATORS = [
         },
     ),
 ]
-JOINERS = [
-    (
-        "join_q2",
-        "cmd/joiners/join_q2/Dockerfile",
-        "N_JOIN_Q2",
-        {
-            "INPUT_EXCHANGE": "join_q2_input",
-            "INPUT_KEY_PREFIX": "joinq2",
-
-            "OUTPUT_QUEUE": "q2_data",
-
-            "EOF_CONTROL_EXCHANGE": "eof_join_q2",
-            "EOF_CONTROL_KEY_PREFIX": "join_q2",
-
-        },
-    ),
-    (
-        "join_q3",
-        "cmd/joiners/join_q3/Dockerfile",
-        "N_JOIN_Q3",
-        {
-            "INPUT_QUEUE_NAME_PREFIX": "join_q3_input",
-            "INPUT_KEY_PREFIX": "joinerformat",
-
-            "AVG_INPUT_EXCHANGE": "avg_per_format",
-            "TXN_INPUT_EXCHANGE": "usd_period2",
-
-            "OUTPUT_QUEUE": "q3_candidates",
-
-            "EOF_CONTROL_EXCHANGE": "eof_join_q3",
-            "EOF_CONTROL_KEY_PREFIX": "join_q3",
-        },
-    ),
-]
 
 def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "usd_filter":
@@ -223,7 +188,7 @@ def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "period2_filter":
         return {
             "OUTPUT_PREFIX":     env.get("OUTPUT_PERIOD2_PREFIX", "joinerformat"),
-            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1")
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
         }
     if name == "period1_filter":
         return {
@@ -239,15 +204,10 @@ def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     return {}
 
 def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
-    if name == "max_per_bank":
-        return {
-            "OUTPUT_KEY_PREFIX": env.get("PREFIX_JOIN_Q2","joinq2"),
-            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q2", "1"),
-        }
     if name == "avg_per_payment_format":
         return {
-            "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
-            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1")
+            "OUTPUT_KEY_PREFIX":     env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
+            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
         }
 
     if name == "fan_in":
@@ -263,33 +223,6 @@ def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         }
 
     return {}
-
-
-def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
-    if name == "join_q2":
-        return {
-            "ACCOUNTS_UPSTREAM_INSTANCES": env.get("N_CLEANERS", "1"),
-            "MAX_PER_BANK_UPSTREAM_INSTANCES": env.get("N_MAXBANK", "1"),
-        }
-    if name == "join_q3":
-        return {
-            "AVG_UPSTREAM_INSTANCES": env.get("N_AVG_PER_PAY", "1"),
-            "TXN_UPSTREAM_INSTANCES": env.get("N_PERIOD2_FILTER", "1"),
-        }
-
-    return {}
-
-
-def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
-    if name == "cleaner":
-        return {
-            "ACCOUNTS_JOIN_KEY_PREFIX" : env.get("PREFIX_JOIN_Q2","joinq2"),
-            "ACCOUNTS_JOIN_PARTITIONS":  env.get("N_JOIN_Q2", "1"),
-        }
-
-    return {}
-
-
 
 def build_compose(env: dict[str, str]) -> str:
     lines = ["services:"]
@@ -354,10 +287,6 @@ def build_compose(env: dict[str, str]) -> str:
 
     for name, dockerfile, env_var, extra_env in SERVICES:
         count = int(env.get(env_var, 1))
-
-        env_map = dict(extra_env)
-        env_map.update(services_extra_env(name, env))
-
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -368,7 +297,7 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - INSTANCE_TOTAL={count}")
             lines.append(f"      - RABBITMQ_HOST=rabbitmq")
             lines.append(f"      - RABBITMQ_PORT=5672")
-            for k, v in env_map.items():
+            for k, v in extra_env.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
@@ -404,51 +333,6 @@ def build_compose(env: dict[str, str]) -> str:
                 if k == "INPUT_KEY_PREFIX":
                     continue
                 lines.append(f"      - {k}={v}")
-
-            lines.append(f"    depends_on:")
-            lines.append(f"      rabbitmq:")
-            lines.append(f"        condition: service_healthy")
-            lines.append("")
-
-    # Joiners
-    for name, dockerfile, count_env_var, extra_env in JOINERS:
-        count = int(env.get(count_env_var, 1))
-        env_map = dict(extra_env)
-        env_map.update(joiners_extra_env(name, env))
-
-        input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
-        input_queue_prefix = extra_env.get("INPUT_QUEUE_NAME_PREFIX", "")
-        eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
-
-        for i in range(1, count + 1):
-            lines.append(f"  {name}_{i}:")
-            lines.append(f"    build:")
-            lines.append(f"      context: .")
-            lines.append(f"      dockerfile: {dockerfile}")
-            lines.append(f"    environment:")
-            lines.append(f"      - INSTANCE_ID={i}")
-            lines.append(f"      - INSTANCE_TOTAL={count}")
-            lines.append(f"      - RABBITMQ_HOST=rabbitmq")
-            lines.append(f"      - RABBITMQ_PORT=5672")
-
-
-            if input_prefix:
-                lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
-
-            if input_queue_prefix:
-                lines.append(f"      - INPUT_QUEUE_NAME={input_queue_prefix}_{i-1}")
-
-            if eof_prefix:
-                lines.append(f"      - EOF_CONTROL_KEY={eof_prefix}_{i-1}")
-
-            for k, v in env_map.items():
-                if k in ("INPUT_KEY_PREFIX", "INPUT_QUEUE_NAME_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
-                    continue
-                if v in env:
-                    v = env[v]
-
-                lines.append(f"      - {k}={v}")
-
 
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")

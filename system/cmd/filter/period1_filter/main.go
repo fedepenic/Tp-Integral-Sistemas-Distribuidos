@@ -69,7 +69,7 @@ func main() {
 	q4FIPrefix := config.MustEnv("OUTPUT_Q4_FI_PREFIX")
 	q4FIPartitions := config.MustEnvInt("OUTPUT_Q4_FI_PARTITIONS")
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
 	outQ3MW := config.Exchange("OUTPUT_Q3_EXCHANGE", []string{}, conn)
