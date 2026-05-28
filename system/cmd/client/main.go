@@ -24,11 +24,14 @@ func main() {
 	conn := dialWithRetry(addr, 10, 2*time.Second)
 	defer conn.Close()
 
-	if err := sendAccounts(conn, inputDir+"/LI-Small_accounts.csv", batchSize, clientID); err != nil {
+	accountsFile      := envOrDefault("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
+	transactionsFile  := envOrDefault("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
+
+	if err := sendAccounts(conn, inputDir+"/"+accountsFile, batchSize, clientID); err != nil {
 		log.Fatalf("sending accounts: %v", err)
 	}
 
-	if err := sendTransactions(conn, inputDir+"/LI-Small_Trans.csv", batchSize, clientID); err != nil {
+	if err := sendTransactions(conn, inputDir+"/"+transactionsFile, batchSize, clientID); err != nil {
 		log.Fatalf("sending transactions: %v", err)
 	}
 
