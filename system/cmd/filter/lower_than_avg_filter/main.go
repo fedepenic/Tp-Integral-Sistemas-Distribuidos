@@ -1,8 +1,8 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"os"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -42,35 +42,41 @@ func main() {
 	instanceID := config.MustEnvInt("INSTANCE_ID")
 	instanceTotal := config.MustEnvInt("INSTANCE_TOTAL")
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	var eofInMW middleware.Middleware
-	if os.Getenv("EOF_INPUT_EXCHANGE") != "" {
-		eofInMW = config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-		defer eofInMW.Close()
+	// eofBroadcast publica a todas las keys del nivel (broadcast a peers).
+	allEOFKeys := make([]string, instanceTotal)
+	for i := 0; i < instanceTotal; i++ {
+		allEOFKeys[i] = fmt.Sprintf("amt_avg_filter_%d", i+1)
 	}
+	eofBroadcast := config.Exchange("EOF_BROADCAST_EXCHANGE", allEOFKeys, conn)
+	defer eofBroadcast.Close()
 
-	eofOutMW := outputMW
-	if os.Getenv("EOF_OUTPUT_EXCHANGE") != "" {
-		eofOutMW = config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-		defer eofOutMW.Close()
+	// eofReceiver se bindea solo a la key propia de esta instancia.
+	ownKey := fmt.Sprintf("amt_avg_filter_%d", instanceID)
+	eofReceiver, err := middleware.CreateExchangeMiddleware(config.MustEnv("EOF_BROADCAST_EXCHANGE"), []string{ownKey}, conn)
+	if err != nil {
+		log.Fatalf("connect to EOF receiver exchange: %v", err)
 	}
+	defer eofReceiver.Close()
 
 	log.Printf("lower_than_avg_filter %d/%d started", instanceID, instanceTotal)
 
-	worker.NewWorker(
+	worker.NewWorkerCoordinated(
 		func(t protocol.Transaction) bool {
+			log.Printf("lower_than_avg_filter TRABAJANDO")
 			return t.AmountPaid < t.AvgForFormat/100.0
 		},
 		[]*worker.Output{
-			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
+			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: outputMW},
 		},
 		inputMW,
-		eofInMW,
+		eofBroadcast,
+		eofReceiver,
 		config.UpstreamCount(),
 	).Run()
 }
