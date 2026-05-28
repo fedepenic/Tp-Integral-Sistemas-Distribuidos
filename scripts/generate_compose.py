@@ -12,6 +12,7 @@ GATEWAY_PORT = 8080
 SINKS = [
     ("1", "q1_data", "eof_q1_data", "N_AMT50_FILTER"),
     ("2", "q2_data", "eof_q2_data", "N_JOIN_Q2"),
+    ("3", "q3_data", "eof_q3_data", "N_AMT_AVG_FILTER"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -53,7 +54,7 @@ NAMED_FILTERS = [
         "EOF_Q4_FO_EXCHANGE":    "eof_usd_period1_for_q4_fo",
         "EOF_Q4_FI_EXCHANGE":    "eof_usd_period1_for_q4_fi",
     }),
-    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", None, {
+    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
         "INPUT_QUEUE":         "q3_candidates",
         "OUTPUT_QUEUE":        "q3_data",
         "EOF_INPUT_EXCHANGE":  "eof_q3_candidates",
@@ -126,7 +127,7 @@ AGGREGATORS = [
             "INPUT_EXCHANGE":       "usd_period1_for_q3",
             "INPUT_KEY_PREFIX":     "avgfmt",
 
-            "OUTPUT_EXCHANGE":         "q3_candidates",
+            "OUTPUT_EXCHANGE":         "avg_per_format",
 
             "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q3",
             "EOF_CONTROL_KEY":      "avg_per_payment_format",
@@ -194,6 +195,23 @@ JOINERS = [
 
         },
     ),
+    (
+        "join_q3",
+        "cmd/joiners/join_q3/Dockerfile",
+        "N_JOIN_Q3",
+        {
+            "INPUT_QUEUE_NAME_PREFIX": "join_q3_input",
+            "INPUT_KEY_PREFIX": "joinerformat",
+
+            "AVG_INPUT_EXCHANGE": "avg_per_format",
+            "TXN_INPUT_EXCHANGE": "usd_period2",
+
+            "OUTPUT_QUEUE": "q3_candidates",
+
+            "EOF_CONTROL_EXCHANGE": "eof_join_q3",
+            "EOF_CONTROL_KEY_PREFIX": "join_q3",
+        },
+    ),
 ]
 
 def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
@@ -205,7 +223,7 @@ def filter_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "period2_filter":
         return {
             "OUTPUT_PREFIX":     env.get("OUTPUT_PERIOD2_PREFIX", "joinerformat"),
-            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
+            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1")
         }
     if name == "period1_filter":
         return {
@@ -229,7 +247,7 @@ def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "avg_per_payment_format":
         return {
             "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
-            "OUTPUT_PARTITIONS": env.get("N_JOINER_FORMAT", "1"),
+            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1")
         }
 
     if name == "fan_in":
@@ -252,6 +270,11 @@ def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         return {
             "ACCOUNTS_UPSTREAM_INSTANCES": env.get("N_CLEANERS", "1"),
             "MAX_PER_BANK_UPSTREAM_INSTANCES": env.get("N_MAXBANK", "1"),
+        }
+    if name == "join_q3":
+        return {
+            "AVG_UPSTREAM_INSTANCES": env.get("N_AVG_PER_PAY", "1"),
+            "TXN_UPSTREAM_INSTANCES": env.get("N_PERIOD2_FILTER", "1"),
         }
 
     return {}
@@ -394,6 +417,7 @@ def build_compose(env: dict[str, str]) -> str:
         env_map.update(joiners_extra_env(name, env))
 
         input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
+        input_queue_prefix = extra_env.get("INPUT_QUEUE_NAME_PREFIX", "")
         eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
 
         for i in range(1, count + 1):
@@ -411,11 +435,14 @@ def build_compose(env: dict[str, str]) -> str:
             if input_prefix:
                 lines.append(f"      - INPUT_KEY={input_prefix}_{i-1}")
 
+            if input_queue_prefix:
+                lines.append(f"      - INPUT_QUEUE_NAME={input_queue_prefix}_{i-1}")
+
             if eof_prefix:
                 lines.append(f"      - EOF_CONTROL_KEY={eof_prefix}_{i-1}")
 
             for k, v in env_map.items():
-                if k in ("INPUT_KEY_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
+                if k in ("INPUT_KEY_PREFIX", "INPUT_QUEUE_NAME_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
                     continue
                 if v in env:
                     v = env[v]

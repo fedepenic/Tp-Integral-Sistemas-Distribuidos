@@ -76,7 +76,22 @@ services:
       dockerfile: cmd/currency_converter/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_QUEUE=wireach_txn
+      - OUTPUT_QUEUE=converted_usd
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  currency_converter_2:
+    build:
+      context: .
+      dockerfile: cmd/currency_converter/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - INPUT_QUEUE=wireach_txn
@@ -118,7 +133,7 @@ services:
       - UPSTREAM_INSTANCES=1
       - INPUT_KEY=avgfmt_0
       - INPUT_EXCHANGE=usd_period1_for_q3
-      - OUTPUT_EXCHANGE=q3_candidates
+      - OUTPUT_EXCHANGE=avg_per_format
       - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q3
       - EOF_CONTROL_KEY=avg_per_payment_format
       - OUTPUT_KEY_PREFIX=joinerformat
@@ -208,6 +223,28 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  join_q3_1:
+    build:
+      context: .
+      dockerfile: cmd/joiners/join_q3/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_KEY=joinerformat_0
+      - INPUT_QUEUE_NAME=join_q3_input_0
+      - EOF_CONTROL_KEY=join_q3_0
+      - AVG_INPUT_EXCHANGE=avg_per_format
+      - TXN_INPUT_EXCHANGE=usd_period2
+      - OUTPUT_QUEUE=q3_candidates
+      - EOF_CONTROL_EXCHANGE=eof_join_q3
+      - AVG_UPSTREAM_INSTANCES=1
+      - TXN_UPSTREAM_INSTANCES=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   sink_1:
     build:
       context: .
@@ -232,6 +269,22 @@ services:
       - QUERY_ID=2
       - INPUT_QUEUE=q2_data
       - EOF_EXCHANGE=eof_q2_data
+      - OUTPUT_QUEUE=reports
+      - UPSTREAM_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  sink_3:
+    build:
+      context: .
+      dockerfile: cmd/sink/Dockerfile
+    environment:
+      - QUERY_ID=3
+      - INPUT_QUEUE=q3_data
+      - EOF_EXCHANGE=eof_q3_data
       - OUTPUT_QUEUE=reports
       - UPSTREAM_TOTAL=1
       - RABBITMQ_HOST=rabbitmq
@@ -351,9 +404,6 @@ services:
       - UPSTREAM_INSTANCES=1
       - INPUT_QUEUE=q3_candidates
       - OUTPUT_QUEUE=q3_data
-      - EOF_INPUT_EXCHANGE=eof_q3_candidates
-      - EOF_INPUT_KEY=amt_avg_filter
-      - EOF_OUTPUT_EXCHANGE=eof_q3_data
     depends_on:
       rabbitmq:
         condition: service_healthy
