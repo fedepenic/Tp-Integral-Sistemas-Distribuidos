@@ -1,4 +1,4 @@
-package filterworker
+package worker
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 // KeyFunc extrae la routing key de una transacción.
@@ -49,8 +48,8 @@ func (o *Output) publish(clientID string, txns []protocol.Transaction) error {
 	groups := make(map[string][]protocol.Transaction)
 	for _, tx := range txns {
 		businessKey := o.GetBusinessKey(tx)
-		partition := worker.PartitionForKey(businessKey, o.Partitions)
-		routingKey := worker.RoutingKey(o.RoutingPrefix, partition)
+		partition := PartitionForKey(businessKey, o.Partitions)
+		routingKey := RoutingKey(o.RoutingPrefix, partition)
 		groups[routingKey] = append(groups[routingKey], tx)
 	}
 
@@ -122,7 +121,7 @@ func (o *Output) sendEOF(clientID string) error {
 		return o.EOFMiddleware.Send(msg)
 	}
 	for partition := 0; partition < o.Partitions; partition++ {
-		routingKey := worker.RoutingKey(o.RoutingPrefix, partition)
+		routingKey := RoutingKey(o.RoutingPrefix, partition)
 		if err := o.EOFMiddleware.SendWithKey(msg, routingKey); err != nil {
 			return err
 		}

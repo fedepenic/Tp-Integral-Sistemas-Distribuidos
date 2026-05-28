@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 // Period 1 Filter (pipeline USD)
@@ -95,7 +95,7 @@ func main() {
 
 	log.Printf("period1_filter %d/%d started", instanceID, instanceTotal)
 
-	filterworker.NewWorker(
+	worker.NewWorker(
 		func(t protocol.Transaction) bool {
 			ts, err := time.Parse(dateLayout, t.Timestamp[:10])
 			if err != nil {
@@ -103,7 +103,7 @@ func main() {
 			}
 			return !ts.Before(start) && ts.Before(end)
 		},
-		[]*filterworker.Output{
+		[]*worker.Output{
 			{
 				Middleware:     outQ3MW,
 				GetBusinessKey: func(t protocol.Transaction) string { return t.PaymentFormat },

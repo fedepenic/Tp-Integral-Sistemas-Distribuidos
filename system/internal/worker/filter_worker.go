@@ -1,4 +1,4 @@
-package filterworker
+package worker
 
 import (
 	"encoding/json"
@@ -114,6 +114,26 @@ func newWorkerInternal(
 	return w
 }
 
+func transactionsFromBatch(batch protocol.Batch) ([]protocol.Transaction, bool, error) {
+	if batch.Type == protocol.BatchTypeTransactions {
+		return batch.Transactions, true, nil
+	}
+	if batch.Type != protocol.BatchTypeData {
+		return nil, false, nil
+	}
+	if batch.DataType != "transactions" && batch.DataType != "q3_candidates" {
+		return nil, false, nil
+	}
+	if len(batch.Records) == 0 {
+		return nil, true, nil
+	}
+	var txns []protocol.Transaction
+	if err := json.Unmarshal(batch.Records, &txns); err != nil {
+		return nil, true, err
+	}
+	return txns, true, nil
+}
+
 // Run bloquea hasta que el worker termina.
 // El caller es responsable de llamar Close() en todos los middlewares al salir.
 func (w *Worker) Run() {
@@ -205,7 +225,17 @@ func (w *Worker) handleDataCoordinated(msg middleware.Message, ack func(), nack 
 		return
 	}
 
-	if batch.Type != protocol.BatchTypeTransactions {
+	txns, ok, err := transactionsFromBatch(batch)
+	if err != nil {
+		log.Printf("[filter-worker] malformed transaction records — discarding: %v", err)
+		w.mu.Lock()
+		w.globalPending--
+		w.cond.Broadcast()
+		w.mu.Unlock()
+		ack()
+		return
+	}
+	if !ok {
 		w.mu.Lock()
 		w.globalPending--
 		w.cond.Broadcast()
@@ -219,10 +249,10 @@ func (w *Worker) handleDataCoordinated(msg middleware.Message, ack func(), nack 
 	w.clientPending[batch.ClientID]++
 	w.mu.Unlock()
 
-	log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+	log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(txns))
 
-	filtered := w.applyFilter(batch.Transactions)
-	log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(batch.Transactions), len(filtered))
+	filtered := w.applyFilter(txns)
+	log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(txns), len(filtered))
 
 	if len(filtered) > 0 {
 		for i, out := range w.outputs {
@@ -322,15 +352,21 @@ func (w *Worker) runSingleQueue() {
 			return
 		}
 
-		if batch.Type != protocol.BatchTypeTransactions {
+		txns, ok, err := transactionsFromBatch(batch)
+		if err != nil {
+			log.Printf("[filter-worker] malformed transaction records — discarding: %v", err)
+			ack()
+			return
+		}
+		if !ok {
 			ack()
 			return
 		}
 
-		log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+		log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(txns))
 
-		filtered := w.applyFilter(batch.Transactions)
-		log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(batch.Transactions), len(filtered))
+		filtered := w.applyFilter(txns)
+		log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(txns), len(filtered))
 
 		if len(filtered) == 0 {
 			ack()
@@ -406,15 +442,21 @@ func (w *Worker) runDualQueue() {
 				return
 			}
 
-			if batch.Type != protocol.BatchTypeTransactions {
+			txns, ok, err := transactionsFromBatch(batch)
+			if err != nil {
+				log.Printf("[filter-worker] malformed transaction records — discarding: %v", err)
+				ack()
+				return
+			}
+			if !ok {
 				ack()
 				return
 			}
 
-			log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+			log.Printf("[filter-worker] batch received client=%s txns=%d", batch.ClientID, len(txns))
 
-			filtered := w.applyFilter(batch.Transactions)
-			log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(batch.Transactions), len(filtered))
+			filtered := w.applyFilter(txns)
+			log.Printf("[filter-worker] batch filtered client=%s in=%d out=%d", batch.ClientID, len(txns), len(filtered))
 
 			if len(filtered) == 0 {
 				ack()

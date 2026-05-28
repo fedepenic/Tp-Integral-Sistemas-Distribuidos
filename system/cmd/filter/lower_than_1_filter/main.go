@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 // USD < 1 Filter
@@ -45,9 +45,9 @@ func main() {
 	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
 	defer eofOutMW.Close()
 
-	filterworker.NewWorker(
+	worker.NewWorker(
 		func(t protocol.Transaction) bool { return t.AmountPaid < 1.0 },
-		[]*filterworker.Output{
+		[]*worker.Output{
 			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,

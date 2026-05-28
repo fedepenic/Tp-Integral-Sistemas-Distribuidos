@@ -2,10 +2,12 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 // Amount < avg/100 Filter  (Q3 final filter)
@@ -21,8 +23,10 @@ import (
 //   - Queue: q3_data  (sin routing key)
 //
 // EOF:
-//   - Entrada: exchange "eof_q3_candidates", key "amt_avg_filter"
-//   - Salida:  exchange "eof_q3_data", key ""
+//   - Entrada preferida: en la misma queue de entrada, emitido por JoinQ3.
+//   - Salida preferida: en la misma queue de salida, consumida por sink_3.
+//   - Legacy: exchanges separados configurados por EOF_INPUT_EXCHANGE y
+//     EOF_OUTPUT_EXCHANGE.
 //
 // Variables de entorno:
 //   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
@@ -44,19 +48,25 @@ func main() {
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
+	var eofInMW middleware.Middleware
+	if os.Getenv("EOF_INPUT_EXCHANGE") != "" {
+		eofInMW = config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
+		defer eofInMW.Close()
+	}
 
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
+	eofOutMW := outputMW
+	if os.Getenv("EOF_OUTPUT_EXCHANGE") != "" {
+		eofOutMW = config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
+		defer eofOutMW.Close()
+	}
 
 	log.Printf("lower_than_avg_filter %d/%d started", instanceID, instanceTotal)
 
-	filterworker.NewWorker(
+	worker.NewWorker(
 		func(t protocol.Transaction) bool {
 			return t.AmountPaid < t.AvgForFormat/100.0
 		},
-		[]*filterworker.Output{
+		[]*worker.Output{
 			{Middleware: outputMW, GetBusinessKey: nil, EOFMiddleware: eofOutMW},
 		},
 		inputMW,
