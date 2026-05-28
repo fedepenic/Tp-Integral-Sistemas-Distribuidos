@@ -12,6 +12,12 @@ GATEWAY_PORT = 8080
 # (query_id, input_queue, upstream_count_env_var)
 SINKS = [
     ("1", "q1_data", "N_AMT50_FILTER"),
+    ("5", "q5_count", "N_COUNTER_Q5"),  # N_COUNTER_Q5 defaults to 1
+]
+
+# (service_name, input_queue, output_queue, upstream_env_var)
+COUNTERS = [
+    ("counter_q5", "q5_filtered", "q5_count", "N_USD_LOWER_THAN_ONE"),
 ]
 
 # (service_name, FILTER_NAME build arg, instance_count_env_var, upstream_count_env_var, extra_env)
@@ -37,68 +43,49 @@ NAMED_FILTERS = [
         "OUTPUT_QUEUE":           "q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":         "usd_for_q3p2",
-        "OUTPUT_QUEUE":        "usd_period2",
-        "EOF_INPUT_EXCHANGE":  "eof_usd_filtered",
-        "EOF_INPUT_KEY":       "eof_period2_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_usd_period2",
+        "INPUT_QUEUE":     "usd_for_q3p2",
+        "OUTPUT_EXCHANGE": "usd_period2",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
         "INPUT_QUEUE":           "usd_for_p1",
         "OUTPUT_Q3_EXCHANGE":    "usd_period1_for_q3",
         "OUTPUT_Q4_FO_EXCHANGE": "usd_period1_for_q4_fo",
         "OUTPUT_Q4_FI_EXCHANGE": "usd_period1_for_q4_fi",
-        "EOF_INPUT_EXCHANGE":    "eof_usd_filtered",
-        "EOF_INPUT_KEY":         "eof_period1_filter",
-        "EOF_Q3_EXCHANGE":       "eof_usd_period1_for_q3",
-        "EOF_Q4_FO_EXCHANGE":    "eof_usd_period1_for_q4_fo",
-        "EOF_Q4_FI_EXCHANGE":    "eof_usd_period1_for_q4_fi",
     }),
     ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", None, {
-        "INPUT_QUEUE":         "q3_candidates",
-        "OUTPUT_QUEUE":        "q3_data",
-        "EOF_INPUT_EXCHANGE":  "eof_q3_candidates",
-        "EOF_INPUT_KEY":       "amt_avg_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_q3_data",
+        "INPUT_QUEUE":  "q3_candidates",
+        "OUTPUT_QUEUE": "q3_data",
     }),
     ("period1_q5_filter", "period1_q5_filter", "N_PERIOD1_Q5_FILTER", "N_CLEANERS", {
-        "INPUT_EXCHANGE":      "transactions_clean",
-        "INPUT_KEY":           "txn_for_q5",
-        "OUTPUT_QUEUE":        "period1_for_q5",
-        "EOF_INPUT_EXCHANGE":  "eof_cleaner",
-        "EOF_INPUT_KEY":       "period1_q5_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_period1_for_q5",
+        "INPUT_QUEUE_NAME":       "period1_q5_filter_input",
+        "INPUT_EXCHANGE":         "transactions_clean",
+        "INPUT_KEY":              "txn_for_q5",
+        "EOF_BROADCAST_EXCHANGE": "period1_q5_filter_eof",
+        "OUTPUT_QUEUE":           "period1_for_q5",
     }),
-    ("wireach_filter", "wire_ach_filter", "N_WIREACH_FILTER", None, {
-        "INPUT_QUEUE":         "period1_for_q5",
-        "OUTPUT_QUEUE":        "wireach_txn",
-        "EOF_INPUT_EXCHANGE":  "eof_period1_for_q5",
-        "EOF_INPUT_KEY":       "wireach_filter",
-        "EOF_OUTPUT_EXCHANGE": "eof_wireach_txn",
+    ("wireach_filter", "wire_ach_filter", "N_WIREACH_FILTER", "N_PERIOD1_Q5_FILTER", {
+        "INPUT_QUEUE":            "period1_for_q5",
+        "EOF_BROADCAST_EXCHANGE": "wireach_filter_eof",
+        "OUTPUT_QUEUE":           "wireach_txn",
     }),
-    ("usd_lower_than_one", "lower_than_1_filter", "N_USD_LOWER_THAN_ONE", None, {
-        "INPUT_QUEUE":         "converted_usd",
-        "OUTPUT_QUEUE":        "q5_filtered",
-        "EOF_INPUT_EXCHANGE":  "eof_converted_usd",
-        "EOF_INPUT_KEY":       "usd_lower_than_one",
-        "EOF_OUTPUT_EXCHANGE": "eof_q5_filtered",
+    ("usd_lower_than_one", "lower_than_1_filter", "N_USD_LOWER_THAN_ONE", "N_CURRENCY_CONVERTERS", {
+        "INPUT_QUEUE":            "converted_usd",
+        "EOF_BROADCAST_EXCHANGE": "usd_lower_than_one_eof",
+        "OUTPUT_QUEUE":           "q5_filtered",
     }),
 ]
 
 SERVICES = [
     ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
-        "INPUT_QUEUE":        "raw_transactions",
-        "OUTPUT_EXCHANGE":    "transactions_clean",
-        "OUTPUT_KEYS":        "txn_for_usd,txn_for_q5",
-        # EOFs go through OUTPUT_EXCHANGE (single-queue mode for usd_filter)
-        # AND through EOF_OUTPUT_EXCHANGE (dual-queue mode for period1_q5_filter).
-        "EOF_OUTPUT_EXCHANGE": "eof_cleaner",
-        "EOF_OUTPUT_KEYS":    "period1_q5_filter",
-        "RABBITMQ_HOST":      "rabbitmq",
-        "RABBITMQ_PORT":      "5672",
-        "EOF_EXCHANGE":       "cleaner_eof",
+        "INPUT_QUEUE":     "raw_transactions",
+        "OUTPUT_EXCHANGE": "transactions_clean",
+        "OUTPUT_KEYS":     "txn_for_usd,txn_for_q5",
+        "RABBITMQ_HOST":   "rabbitmq",
+        "RABBITMQ_PORT":   "5672",
+        "EOF_EXCHANGE":    "cleaner_eof",
     }),
-    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", {
+    # UPSTREAM_INSTANCES = N_WIREACH_FILTER: each wireach_filter instance sends its own EOF.
+    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {
         "INPUT_QUEUE":  "wireach_txn",
         "OUTPUT_QUEUE": "converted_usd",
         "RABBITMQ_HOST": "rabbitmq",
@@ -168,8 +155,12 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - gateway")
         lines.append("")
 
-    for name, dockerfile, env_var, extra_env in SERVICES:
+    for entry in SERVICES:
+        name, dockerfile, env_var = entry[0], entry[1], entry[2]
+        upstream_env_var = entry[3] if len(entry) > 4 else None
+        extra_env = entry[4] if len(entry) > 4 else entry[3]
         count = int(env.get(env_var, 1))
+        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else None
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -178,12 +169,32 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
+            if upstream is not None:
+                lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
             for k, v in extra_env.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
             lines.append("")
+
+    # Counters — single instance, aggregate transactions into a count before the sink
+    for svc_name, input_queue, output_queue, upstream_env_var in COUNTERS:
+        upstream = int(env.get(upstream_env_var, 1))
+        lines.append(f"  {svc_name}:")
+        lines.append(f"    build:")
+        lines.append(f"      context: .")
+        lines.append(f"      dockerfile: cmd/counter/Dockerfile")
+        lines.append(f"    environment:")
+        lines.append(f"      - INPUT_QUEUE={input_queue}")
+        lines.append(f"      - OUTPUT_QUEUE={output_queue}")
+        lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
+        lines.append(f"      - RABBITMQ_HOST=rabbitmq")
+        lines.append(f"      - RABBITMQ_PORT=5672")
+        lines.append(f"    depends_on:")
+        lines.append(f"      rabbitmq:")
+        lines.append(f"        condition: service_healthy")
+        lines.append("")
 
     # Sinks — always single-instance, one per query
     for query_id, input_queue, upstream_env_var in SINKS:
@@ -196,7 +207,7 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
         lines.append(f"      - OUTPUT_QUEUE=reports")
-        lines.append(f"      - UPSTREAM_TOTAL={upstream}")
+        lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
         lines.append(f"    depends_on:")

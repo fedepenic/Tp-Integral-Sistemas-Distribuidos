@@ -86,8 +86,6 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
-
 	w, err := r.writerFor(batch.ClientID, batch.QueryID)
 	if err != nil {
 		log.Printf("reporter: open writer for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
@@ -95,15 +93,33 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	if err := r.writeRows(w, batch); err != nil {
-		log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
-		nack()
-		return
+	if batch.Type == protocol.BatchTypeCount {
+		log.Printf("reporter: count received client=%s query=%s count=%d", batch.ClientID, batch.QueryID, batch.Count)
+		if err := r.writeCount(w, batch.Count); err != nil {
+			log.Printf("reporter: write count for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
+	} else {
+		log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
+		if err := r.writeRows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
 	}
 
 	w.csv.Flush()
-	log.Printf("reporter: batch written client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
 	ack()
+}
+
+func (r *reporter) writeCount(w *queryWriter, count int64) error {
+	if !w.headerWritten {
+		w.csv.Write([]string{"quantity"})
+		w.headerWritten = true
+	}
+	w.csv.Write([]string{strconv.FormatInt(count, 10)})
+	return w.csv.Error()
 }
 
 func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {

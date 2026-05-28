@@ -2,34 +2,12 @@ package main
 
 import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
-	filterworker "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/filter-worker"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 )
 
-// Wire/ACH Filter
-//
-// Entrada:
-//   - Queue: period1_for_q5
-//
-// Condición: PaymentFormat == "Wire" OR PaymentFormat == "ACH"
-//
-// Salida:
-//   - Queue: wireach_txn  (sin routing key)
-//
-// EOF:
-//   - Entrada: exchange "eof_period1_for_q5", key "wireach_filter"
-//   - Salida:  exchange "eof_wireach_txn",    key ""
-//
-// Variables de entorno:
-//   RABBITMQ_HOST, RABBITMQ_PORT, UPSTREAM_INSTANCES
-//   INPUT_QUEUE         — cola de entrada (period1_for_q5)
-//   OUTPUT_QUEUE        — cola de salida  (wireach_txn)
-//   EOF_INPUT_EXCHANGE  — exchange EOF entrada (eof_period1_for_q5)
-//   EOF_INPUT_KEY       — routing key propia   (wireach_filter)
-//   EOF_OUTPUT_EXCHANGE — exchange EOF salida  (eof_wireach_txn)
-
 func main() {
-	conn := config.ConnSettings()
+	svc := node.New("wireach_filter")
+	conn := svc.Conn()
 
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
@@ -37,21 +15,5 @@ func main() {
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
 	defer outputMW.Close()
 
-	eofInMW := config.ExchangeWithKey("EOF_INPUT_EXCHANGE", "EOF_INPUT_KEY", conn)
-	defer eofInMW.Close()
-
-	eofOutMW := config.Exchange("EOF_OUTPUT_EXCHANGE", []string{""}, conn)
-	defer eofOutMW.Close()
-
-	filterworker.NewWorker(
-		func(t protocol.Transaction) bool {
-			return t.PaymentFormat == "Wire" || t.PaymentFormat == "ACH"
-		},
-		[]*filterworker.Output{
-			{Middleware: outputMW, GetKey: nil, EOFMiddleware: eofOutMW},
-		},
-		inputMW,
-		eofInMW,
-		config.UpstreamCount(),
-	).Run()
+	svc.Run(inputMW, outputMW, newProcess())
 }

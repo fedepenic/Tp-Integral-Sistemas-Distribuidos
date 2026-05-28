@@ -14,6 +14,7 @@ const (
 	BatchTypeAccounts     BatchType = "accounts"
 	BatchTypeEOF          BatchType = "eof"
 	BatchTypeACK          BatchType = "ack"
+	BatchTypeCount        BatchType = "count"
 )
 
 type Transaction struct {
@@ -45,6 +46,7 @@ type Batch struct {
 	QueryID      string        `json:"query_id,omitempty"`
 	Transactions []Transaction `json:"transactions,omitempty"`
 	Accounts     []Account     `json:"accounts,omitempty"`
+	Count        int64         `json:"count,omitempty"`
 }
 
 func Send(conn net.Conn, batch Batch) error {

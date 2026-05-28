@@ -9,23 +9,25 @@ import (
 )
 
 func main() {
-	svc := node.New("currency_converter")
-	conn := svc.Conn()
+	n := node.NewNode()
+	conn := n.Conn()
 
-	inputQueue  := config.EnvOrDefault("INPUT_QUEUE", "wireach_txn")
-	outputQueue := config.EnvOrDefault("OUTPUT_QUEUE", "converted_usd")
+	inputQueue  := config.EnvOrDefault("INPUT_QUEUE", "q5_filtered")
+	outputQueue := config.EnvOrDefault("OUTPUT_QUEUE", "q5_count")
 
 	inputMW, err := middleware.CreateQueueMiddleware(inputQueue, conn)
 	if err != nil {
-		log.Fatalf("[currency_converter] connect to input queue: %v", err)
+		log.Fatalf("[counter] connect to input queue: %v", err)
 	}
 	defer inputMW.Close()
 
 	outputMW, err := middleware.CreateQueueMiddleware(outputQueue, conn)
 	if err != nil {
-		log.Fatalf("[currency_converter] connect to output queue: %v", err)
+		log.Fatalf("[counter] connect to output queue: %v", err)
 	}
 	defer outputMW.Close()
 
-	svc.Run(inputMW, outputMW, newProcess())
+	log.Printf("[counter] started: %s -> %s (upstream=%d)", inputQueue, outputQueue, n.UpstreamCount())
+
+	n.Run(inputMW, outputMW, newProcess(outputMW))
 }
