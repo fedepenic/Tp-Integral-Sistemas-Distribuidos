@@ -276,6 +276,8 @@ def build_compose(env: dict[str, str]) -> str:
     # Clients
     n_clients = int(env.get("N_CLIENTS", 1))
     batch_size = int(env.get("BATCH_SIZE", 1000))
+    transactions_file = env.get("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
+    accounts_file = env.get("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
     for i in range(1, n_clients + 1):
         lines.append(f"  client_{i}:")
         lines.append(f"    build:")
@@ -288,6 +290,8 @@ def build_compose(env: dict[str, str]) -> str:
         lines.append(f"      - GATEWAY_PORT={GATEWAY_PORT}")
         lines.append(f"      - INPUT_DIR=/data/client_{i}")
         lines.append(f"      - BATCH_SIZE={batch_size}")
+        lines.append(f"      - TRANSACTIONS_FILE={transactions_file}")
+        lines.append(f"      - ACCOUNTS_FILE={accounts_file}")
         lines.append(f"    volumes:")
         lines.append(f"      - ../input:/data")
         lines.append(f"    depends_on:")
