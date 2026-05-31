@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/aggregators"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -87,12 +86,6 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	if len(batch.Transactions) > 0 {
-		log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
-	} else {
-		log.Printf("reporter: batch received client=%s query=%s data_type=%s records=%d bytes", batch.ClientID, batch.QueryID, batch.DataType, len(batch.Records))
-	}
-
 	w, err := r.writerFor(batch.ClientID, batch.QueryID)
 	if err != nil {
 		log.Printf("reporter: open writer for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
@@ -100,136 +93,56 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	if err := r.writeRows(w, batch); err != nil {
-		log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
-		nack()
-		return
+	if batch.Type == protocol.BatchTypeCount {
+		log.Printf("reporter: count received client=%s query=%s count=%d", batch.ClientID, batch.QueryID, batch.Count)
+		if err := r.writeCount(w, batch.Count); err != nil {
+			log.Printf("reporter: write count for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
+	} else {
+		log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
+		if err := r.writeRows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
 	}
 
 	w.csv.Flush()
-	if batch.Type != protocol.BatchTypeEOF {
-		if len(batch.Transactions) > 0 {
-			log.Printf("reporter: batch written client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
-		} else {
-			log.Printf("reporter: batch written client=%s query=%s data_type=%s records=%d bytes", batch.ClientID, batch.QueryID, batch.DataType, len(batch.Records))
-		}
-	}
 	ack()
 }
 
+func (r *reporter) writeCount(w *queryWriter, count int64) error {
+	if !w.headerWritten {
+		w.csv.Write([]string{"quantity"})
+		w.headerWritten = true
+	}
+	w.csv.Write([]string{strconv.FormatInt(count, 10)})
+	return w.csv.Error()
+}
+
 func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
-	switch {
-	case len(batch.Transactions) > 0:
-		return r.writeTransactions(w, batch.Transactions)
-
-	case len(batch.Records) > 0:
-		switch batch.DataType {
-		case "max_per_bank":
-			var results []aggregators.MaxPerBankResult
-			if err := json.Unmarshal(batch.Records, &results); err != nil {
-				return err
-			}
-			return r.writeMaxPerBank(w, results)
-
-		case "avg_per_format":
-			var results []aggregators.AvgPerPaymentFormatResult
-			if err := json.Unmarshal(batch.Records, &results); err != nil {
-				return err
-			}
-			return r.writeAvgPerFormat(w, results)
-
-		case "scatter_gather_result":
-			var results []aggregators.ScatterGatherResult
-			if err := json.Unmarshal(batch.Records, &results); err != nil {
-				return err
-			}
-			return r.writeScatterGather(w, results)
-
-		case "q5_count":
-			var count int
-			if err := json.Unmarshal(batch.Records, &count); err != nil {
-				return err
-			}
-			return r.writeQ5Count(w, count)
-
-		default:
-			log.Printf("reporter: unknown data_type %q — skipping", batch.DataType)
+	if len(batch.Transactions) > 0 {
+		if !w.headerWritten {
+			w.csv.Write([]string{
+				"From Bank",
+				"Account",
+				"To Bank",
+				"Account.1",
+				"Amount Paid",
+			})
+			w.headerWritten = true
 		}
-
-	case len(batch.ScatterGatherItems) > 0:
-		log.Printf("reporter: received raw scatter_gather_items — skipping")
+		for _, t := range batch.Transactions {
+			w.csv.Write([]string{
+				t.FromBank,
+				t.FromAccount,
+				t.ToBank,
+				t.ToAccount,
+				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
+			})
+		}
 	}
-	return w.csv.Error()
-}
-
-func (r *reporter) writeTransactions(w *queryWriter, txns []protocol.Transaction) error {
-	if !w.headerWritten {
-		w.csv.Write([]string{"From Bank", "Account", "To Bank", "Account.1", "Amount Paid"})
-		w.headerWritten = true
-	}
-	for _, t := range txns {
-		w.csv.Write([]string{
-			t.FromBank,
-			t.FromAccount,
-			t.ToBank,
-			t.ToAccount,
-			strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
-		})
-	}
-	return w.csv.Error()
-}
-
-func (r *reporter) writeMaxPerBank(w *queryWriter, results []aggregators.MaxPerBankResult) error {
-	if !w.headerWritten {
-		w.csv.Write([]string{"Bank Name", "Source Account", "Max Amount USD"})
-		w.headerWritten = true
-	}
-	for _, res := range results {
-		w.csv.Write([]string{
-			res.BankName,
-			res.SourceAccount,
-			strconv.FormatFloat(res.MaxAmountUSD, 'f', -1, 64),
-		})
-	}
-	return w.csv.Error()
-}
-
-func (r *reporter) writeAvgPerFormat(w *queryWriter, results []aggregators.AvgPerPaymentFormatResult) error {
-	if !w.headerWritten {
-		w.csv.Write([]string{"Payment Format", "Avg Amount"})
-		w.headerWritten = true
-	}
-	for _, res := range results {
-		w.csv.Write([]string{
-			res.PaymentFormat,
-			strconv.FormatFloat(res.AvgAmount, 'f', -1, 64),
-		})
-	}
-	return w.csv.Error()
-}
-
-func (r *reporter) writeScatterGather(w *queryWriter, results []aggregators.ScatterGatherResult) error {
-	if !w.headerWritten {
-		w.csv.Write([]string{"From Bank", "From Account", "To Bank", "To Account", "Target Count"})
-		w.headerWritten = true
-	}
-	for _, res := range results {
-		w.csv.Write([]string{
-			res.FromBank,
-			res.FromAccount,
-			res.ToBank,
-			res.ToAccount,
-			strconv.Itoa(res.TargetCount),
-		})
-	}
-	return w.csv.Error()
-}
-
-func (r *reporter) writeQ5Count(w *queryWriter, count int) error {
-	if !w.headerWritten {
-		w.csv.Write([]string{"Count"})
-		w.headerWritten = true
-	}
-	w.csv.Write([]string{strconv.Itoa(count)})
 	return w.csv.Error()
 }

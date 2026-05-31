@@ -30,6 +30,15 @@ func MustEnvInt(key string) int {
 	return value
 }
 
+// EnvOrDefault retorna el valor de la variable de entorno key,
+// o def si la variable no está definida o está vacía.
+func EnvOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 // ConnSettings lee RABBITMQ_HOST y RABBITMQ_PORT del entorno
 // y retorna el struct de conexión listo para usar.
 func ConnSettings() middleware.ConnSettings {

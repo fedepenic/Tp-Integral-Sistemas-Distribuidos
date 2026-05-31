@@ -16,6 +16,7 @@ const (
 	BatchTypeScatterGather BatchType = "scatter_gather"
 	BatchTypeEOF           BatchType = "eof"
 	BatchTypeACK           BatchType = "ack"
+	BatchTypeCount         BatchType = "count"
 )
 
 type Transaction struct {
@@ -59,6 +60,7 @@ type Batch struct {
 	Accounts           []Account           `json:"accounts,omitempty"`
 	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`
 	Records            json.RawMessage     `json:"records,omitempty"`
+	Count              int64               `json:"count,omitempty"`
 }
 
 func Send(conn net.Conn, batch Batch) error {
