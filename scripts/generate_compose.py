@@ -136,7 +136,7 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Clients
     n_clients = int(env.get("N_CLIENTS", 1))
-    batch_size = int(env.get("BATCH_SIZE", 100))
+    batch_size = int(env.get("BATCH_SIZE", 1000))
     for i in range(1, n_clients + 1):
         lines.append(f"  client_{i}:")
         lines.append(f"    build:")

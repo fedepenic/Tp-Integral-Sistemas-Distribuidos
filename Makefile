@@ -61,7 +61,7 @@ run-system:
 	docker-compose -f system/docker-compose.yml up --build --remove-orphans
 
 stop-system:
-	docker-compose -f system/docker-compose.yml down
+	docker-compose -f system/docker-compose.yml down -v
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
