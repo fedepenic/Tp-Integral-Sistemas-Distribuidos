@@ -211,7 +211,16 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		// Give stateful nodes a chance to flush accumulated results before the
 		// EOF propagates. Stateless nodes (filters) naturally return ok=false
 		// here since the EOF batch carries no transactions to process.
+		//
+		// If fn returns (eofBatch, true) it means the node handled EOF
+		// forwarding itself (e.g. via SendWithKey per partition). Skip our own
+		// outputMW.Send so the EOF is not duplicated.
 		if result, ok := fn(batch); ok {
+			if result.Type == protocol.BatchTypeEOF {
+				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, batch.ClientID)
+				ack()
+				return
+			}
 			data, err := json.Marshal(result)
 			if err != nil {
 				log.Printf("[%s] marshal flush result client=%s: %v", s.name, batch.ClientID, err)

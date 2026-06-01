@@ -30,7 +30,8 @@ func newMaxPerBank(outputMW middleware.Middleware) *maxPerBank {
 func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.Type == protocol.BatchTypeEOF {
 		m.flush(batch.ClientID)
-		return protocol.Batch{}, false
+		// Return the EOF batch so Scalable knows we handled forwarding ourselves.
+		return batch, true
 	}
 	banks, ok := m.state[batch.ClientID]
 	if !ok {
@@ -80,6 +81,23 @@ func (m *maxPerBank) flush(clientID string) {
 		}
 		if err := m.outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
 			log.Printf("[max_per_bank] send results partition=%d: %v", partition, err)
+		}
+	}
+
+	eofBatch := protocol.Batch{
+		Type:     protocol.BatchTypeEOF,
+		ClientID: clientID,
+		DataType: "max_per_bank",
+	}
+	eofData, err := json.Marshal(eofBatch)
+	if err != nil {
+		log.Printf("[max_per_bank] marshal EOF: %v", err)
+		return
+	}
+	for i := 0; i < m.outputPartitions; i++ {
+		routingKey := worker.RoutingKey(m.outputKeyPrefix, i)
+		if err := m.outputMW.SendWithKey(middleware.Message{Body: string(eofData)}, routingKey); err != nil {
+			log.Printf("[max_per_bank] send EOF partition=%d: %v", i, err)
 		}
 	}
 }
