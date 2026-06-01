@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/joiners"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 )
 
@@ -79,7 +78,7 @@ func main() {
 	}
 	defer controlSub.Close()
 
-	node := joiners.NewJoinQ2(
+	node := newJoinQ2(
 		inputMW,
 		outputMW,
 		controlPub,

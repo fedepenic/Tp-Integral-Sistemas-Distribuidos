@@ -88,7 +88,7 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := eofReceiver.StartConsuming(s.handleEOF(outputMW)); err != nil &&
+		if err := eofReceiver.StartConsuming(s.handleEOF(outputMW, fn)); err != nil &&
 			err != middleware.ErrMessageMiddlewareDisconnected {
 			log.Printf("[%s] EOF receiver error: %v", s.name, err)
 		}
@@ -181,7 +181,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 	}
 }
 
-func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Message, func(), func()) {
+func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) func(middleware.Message, func(), func()) {
 	return func(msg middleware.Message, ack func(), nack func()) {
 		var batch protocol.Batch
 		if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
@@ -207,6 +207,23 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware) func(middleware.Mes
 			s.cond.Wait()
 		}
 		s.mu.Unlock()
+
+		// Give stateful nodes a chance to flush accumulated results before the
+		// EOF propagates. Stateless nodes (filters) naturally return ok=false
+		// here since the EOF batch carries no transactions to process.
+		if result, ok := fn(batch); ok {
+			data, err := json.Marshal(result)
+			if err != nil {
+				log.Printf("[%s] marshal flush result client=%s: %v", s.name, batch.ClientID, err)
+				nack()
+				return
+			}
+			if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
+				log.Printf("[%s] send flush result client=%s: %v", s.name, batch.ClientID, err)
+				nack()
+				return
+			}
+		}
 
 		if err := outputMW.Send(msg); err != nil {
 			log.Printf("[%s] send EOF client=%s: %v", s.name, batch.ClientID, err)

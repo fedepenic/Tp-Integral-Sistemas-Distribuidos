@@ -103,11 +103,10 @@ AGGREGATORS = [
         "N_MAXBANK",
         "N_USD_FILTER",
         {
-            "INPUT_EXCHANGE":       "usd_for_q2",
-            "INPUT_KEY_PREFIX":     "maxbank",
-            "OUTPUT_EXCHANGE":      "join_q2_input",
-            "EOF_CONTROL_EXCHANGE": "eof_usd_for_q2",
-            "EOF_CONTROL_KEY":      "max_per_bank",
+            "INPUT_QUEUE_NAME": "max_per_bank_input",
+            "INPUT_EXCHANGE":   "usd_for_q2",
+            "INPUT_KEY":        "maxbank",
+            "OUTPUT_EXCHANGE":  "join_q2_input",
         }
     ),
     (
