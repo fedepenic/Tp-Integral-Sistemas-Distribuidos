@@ -54,7 +54,7 @@ func (j *SGJoin) handle(msg middleware.Message, ack func(), nack func()) {
 
 	clientID := batch.ClientID
 	if clientID == "" {
-		clientID = defaultClientID
+		clientID = "default"
 	}
 
 	if batch.Type == protocol.BatchTypeEOF {
