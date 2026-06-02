@@ -238,11 +238,30 @@ services:
       dockerfile: cmd/aggregators/avg_per_payment_format/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=2
       - INPUT_KEY=avgfmt_0
+      - INPUT_EXCHANGE=usd_period1_for_q3
+      - OUTPUT_EXCHANGE=avg_per_format
+      - OUTPUT_KEY_PREFIX=joinerformat
+      - OUTPUT_PARTITIONS=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  avg_per_payment_format_2:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/avg_per_payment_format/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=avgfmt_1
       - INPUT_EXCHANGE=usd_period1_for_q3
       - OUTPUT_EXCHANGE=avg_per_format
       - OUTPUT_KEY_PREFIX=joinerformat
@@ -362,7 +381,7 @@ services:
       - AVG_INPUT_EXCHANGE=avg_per_format
       - TXN_INPUT_EXCHANGE=usd_period2
       - OUTPUT_QUEUE=q3_candidates
-      - AVG_UPSTREAM_INSTANCES=1
+      - AVG_UPSTREAM_INSTANCES=2
       - TXN_UPSTREAM_INSTANCES=2
     depends_on:
       rabbitmq:
@@ -382,7 +401,7 @@ services:
       - AVG_INPUT_EXCHANGE=avg_per_format
       - TXN_INPUT_EXCHANGE=usd_period2
       - OUTPUT_QUEUE=q3_candidates
-      - AVG_UPSTREAM_INSTANCES=1
+      - AVG_UPSTREAM_INSTANCES=2
       - TXN_UPSTREAM_INSTANCES=2
     depends_on:
       rabbitmq:
@@ -613,7 +632,7 @@ services:
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
-      - OUTPUT_Q3_PARTITIONS=1
+      - OUTPUT_Q3_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -637,7 +656,7 @@ services:
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
-      - OUTPUT_Q3_PARTITIONS=1
+      - OUTPUT_Q3_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
