@@ -144,5 +144,25 @@ func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 			})
 		}
 	}
+
+	if batch.DataType == "max_per_bank" && len(batch.Records) > 0 {
+		var results []maxPerBankResult
+		if err := json.Unmarshal(batch.Records, &results); err != nil {
+			return fmt.Errorf("unmarshal max_per_bank records: %w", err)
+		}
+		if !w.headerWritten {
+			w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
+			w.headerWritten = true
+		}
+		for _, res := range results {
+			w.csv.Write([]string{
+				res.BankID,
+				res.SourceAccount,
+				res.BankName,
+				strconv.FormatFloat(res.MaxAmountUSD, 'f', -1, 64),
+			})
+		}
+	}
+
 	return w.csv.Error()
 }
