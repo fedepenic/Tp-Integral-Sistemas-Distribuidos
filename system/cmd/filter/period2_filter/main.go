@@ -9,7 +9,7 @@ func main() {
 	svc := node.New("period2_filter")
 	conn := svc.Conn()
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
 	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{}, conn)

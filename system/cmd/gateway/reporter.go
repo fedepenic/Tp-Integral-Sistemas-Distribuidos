@@ -100,6 +100,13 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 			nack()
 			return
 		}
+	} else if batch.QueryID == "3" {
+		log.Printf("reporter: q3 batch client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+		if err := writeQ3Rows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
 	} else {
 		log.Printf("reporter: batch received client=%s query=%s txns=%d", batch.ClientID, batch.QueryID, len(batch.Transactions))
 		if err := r.writeRows(w, batch); err != nil {

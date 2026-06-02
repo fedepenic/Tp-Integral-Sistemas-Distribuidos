@@ -45,13 +45,17 @@ NAMED_FILTERS = [
         "EOF_BROADCAST_EXCHANGE": "amt50_filter_eof",
         "OUTPUT_QUEUE":           "q1_data",
     }),
-    ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":       "usd_for_q3p2",
-        "OUTPUT_EXCHANGE":   "usd_period2",
-        "OUTPUT_KEY_PREFIX": "joinerformat",
+    ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", "N_USD_FILTER", {
+        "INPUT_QUEUE_NAME":   "period2_filter_input",
+        "INPUT_EXCHANGE":     "usd_filtered",
+        "EOF_BROADCAST_EXCHANGE": "period2_filter_eof",
+        "OUTPUT_EXCHANGE":    "usd_period2",
+        "OUTPUT_KEY_PREFIX":  "joinerformat",
     }),
-    ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
-        "INPUT_QUEUE":            "usd_for_p1",
+    ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", "N_USD_FILTER", {
+        "INPUT_QUEUE_NAME":       "period1_filter_input",
+        "INPUT_EXCHANGE":         "usd_filtered",
+        "EOF_BROADCAST_EXCHANGE": "period1_filter_eof",
         "OUTPUT_Q3_EXCHANGE":     "usd_period1_for_q3",
         "OUTPUT_Q3_KEY_PREFIX":   "avgfmt",
         "OUTPUT_Q4_FO_EXCHANGE":  "usd_period1_for_q4_fo",

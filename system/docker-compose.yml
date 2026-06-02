@@ -246,7 +246,7 @@ services:
       - INPUT_EXCHANGE=usd_period1_for_q3
       - OUTPUT_EXCHANGE=avg_per_format
       - OUTPUT_KEY_PREFIX=joinerformat
-      - OUTPUT_PARTITIONS=1
+      - OUTPUT_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -561,8 +561,10 @@ services:
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
-      - INPUT_QUEUE=usd_for_q3p2
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=period2_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=period2_filter_eof
       - OUTPUT_EXCHANGE=usd_period2
       - OUTPUT_KEY_PREFIX=joinerformat
       - OUTPUT_PARTITIONS=2
@@ -581,8 +583,10 @@ services:
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
-      - INPUT_QUEUE=usd_for_q3p2
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=period2_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=period2_filter_eof
       - OUTPUT_EXCHANGE=usd_period2
       - OUTPUT_KEY_PREFIX=joinerformat
       - OUTPUT_PARTITIONS=2
@@ -601,13 +605,15 @@ services:
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
-      - INPUT_QUEUE=usd_for_p1
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=period1_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=period1_filter_eof
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
-      - OUTPUT_Q3_PARTITIONS=1
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_Q3_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -623,13 +629,15 @@ services:
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
-      - INPUT_QUEUE=usd_for_p1
+      - UPSTREAM_INSTANCES=2
+      - INPUT_QUEUE_NAME=period1_filter_input
+      - INPUT_EXCHANGE=usd_filtered
+      - EOF_BROADCAST_EXCHANGE=period1_filter_eof
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
-      - OUTPUT_Q3_PARTITIONS=1
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_Q3_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -645,10 +653,9 @@ services:
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=1
+      - UPSTREAM_INSTANCES=2
       - INPUT_QUEUE=q3_candidates
       - OUTPUT_QUEUE=q3_data
-      - UPSTREAM_INSTANCES=2
     depends_on:
       rabbitmq:
         condition: service_healthy
