@@ -5,7 +5,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/aggregators"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -17,7 +16,7 @@ type SGJoin struct {
 	upstreamTotal int
 
 	mu           sync.Mutex
-	fanOutByMid  map[string]map[string][]aggregators.FanOutResult
+	fanOutByMid  map[string]map[string][]fanOutResult
 	fanInByMid   map[string]map[string][]fanInResult
 	eofOutCount  map[string]int
 	eofInCount   map[string]int
@@ -29,7 +28,7 @@ func NewSGJoin(inputMW, outputMW middleware.Middleware, upstreamTotal int) *SGJo
 		inputMW:       inputMW,
 		outputMW:      outputMW,
 		upstreamTotal: upstreamTotal,
-		fanOutByMid:   make(map[string]map[string][]aggregators.FanOutResult),
+		fanOutByMid:   make(map[string]map[string][]fanOutResult),
 		fanInByMid:    make(map[string]map[string][]fanInResult),
 		eofOutCount:   make(map[string]int),
 		eofInCount:    make(map[string]int),
@@ -110,7 +109,7 @@ func (j *SGJoin) handleEOF(clientID, dataType string, ack func(), nack func()) {
 }
 
 func (j *SGJoin) handleFanOut(clientID string, records json.RawMessage, ack func(), nack func()) {
-	var results []aggregators.FanOutResult
+	var results []fanOutResult
 	if err := json.Unmarshal(records, &results); err != nil {
 		nack()
 		return
@@ -119,7 +118,7 @@ func (j *SGJoin) handleFanOut(clientID string, records json.RawMessage, ack func
 	j.mu.Lock()
 	fanOutMap := j.fanOutByMid[clientID]
 	if fanOutMap == nil {
-		fanOutMap = make(map[string][]aggregators.FanOutResult)
+		fanOutMap = make(map[string][]fanOutResult)
 		j.fanOutByMid[clientID] = fanOutMap
 	}
 	fanInMap := j.fanInByMid[clientID]

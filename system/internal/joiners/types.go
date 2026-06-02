@@ -6,3 +6,10 @@ type fanInResult struct {
 	ToBank        string `json:"to_bank"`
 	ToAccount     string `json:"to_account"`
 }
+
+type fanOutResult struct {
+	FromBank      string `json:"from_bank"`
+	FromAccount   string `json:"from_account"`
+	MiddleBank    string `json:"middle_bank"`
+	MiddleAccount string `json:"middle_account"`
+}

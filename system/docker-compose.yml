@@ -302,8 +302,6 @@ services:
       - INPUT_KEY=fo_0
       - INPUT_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_EXCHANGE=scatter_gather_fo
-      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q4_fo
-      - EOF_CONTROL_KEY=fan_out
       - OUTPUT_KEY_PREFIX=joinersg
       - OUTPUT_PARTITIONS=1
     depends_on:

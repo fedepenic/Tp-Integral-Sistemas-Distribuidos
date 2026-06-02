@@ -145,11 +145,9 @@ AGGREGATORS = [
         "N_FO",
         "N_PERIOD1_FILTER",
         {
-            "INPUT_EXCHANGE":       "usd_period1_for_q4_fo",
-            "INPUT_KEY_PREFIX":     "fo",
-            "OUTPUT_EXCHANGE":      "scatter_gather_fo",
-            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q4_fo",
-            "EOF_CONTROL_KEY":      "fan_out",
+            "INPUT_EXCHANGE":   "usd_period1_for_q4_fo",
+            "INPUT_KEY_PREFIX": "fo",
+            "OUTPUT_EXCHANGE":  "scatter_gather_fo",
         },
     ),
     (
