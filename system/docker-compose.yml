@@ -308,6 +308,27 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  joiner_sg_1:
+    build:
+      context: .
+      dockerfile: cmd/joiners/joiner_sg/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_QUEUE_NAME=joiner_sg_input_0
+      - INPUT_KEY=joinersg_0
+      - FO_INPUT_EXCHANGE=scatter_gather_fo
+      - FI_INPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_KEY=scatter_gather
+      - FO_UPSTREAM_INSTANCES=1
+      - FI_UPSTREAM_INSTANCES=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   scatter_gather_1:
     build:
       context: .

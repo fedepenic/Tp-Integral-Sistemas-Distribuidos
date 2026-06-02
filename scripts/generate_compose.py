@@ -186,6 +186,19 @@ JOINERS = [
             "OUTPUT_QUEUE":            "q3_candidates",
         },
     ),
+    (
+        "joiner_sg",
+        "cmd/joiners/joiner_sg/Dockerfile",
+        "N_JOINER_SG",
+        {
+            "INPUT_QUEUE_NAME_PREFIX": "joiner_sg_input",
+            "INPUT_KEY_PREFIX":        "joinersg",
+            "FO_INPUT_EXCHANGE":       "scatter_gather_fo",
+            "FI_INPUT_EXCHANGE":       "scatter_gather_fi",
+            "OUTPUT_EXCHANGE":         "scatter_gather_data",
+            "OUTPUT_KEY":              "scatter_gather",
+        },
+    ),
 ]
 
 
@@ -247,6 +260,11 @@ def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         return {
             "AVG_UPSTREAM_INSTANCES": env.get("N_AVG_PER_PAY", "1"),
             "TXN_UPSTREAM_INSTANCES": env.get("N_PERIOD2_FILTER", "1"),
+        }
+    if name == "joiner_sg":
+        return {
+            "FO_UPSTREAM_INSTANCES": env.get("N_FO", "1"),
+            "FI_UPSTREAM_INSTANCES": env.get("N_FI", "1"),
         }
     return {}
 
