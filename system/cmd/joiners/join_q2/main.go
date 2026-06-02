@@ -6,31 +6,16 @@ import (
 	"strconv"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
 func main() {
 	conn := connSettings()
 
-	inputExchange := mustEnv("INPUT_EXCHANGE")
-	inputKey := mustEnv("INPUT_KEY")
-
-	outputQueue := os.Getenv("OUTPUT_QUEUE")
-	outputExchange := os.Getenv("OUTPUT_EXCHANGE")
-	outputKey := os.Getenv("OUTPUT_KEY")
-
-	if outputQueue == "" && outputExchange == "" {
-		log.Fatalf("[join_q2] OUTPUT_QUEUE or OUTPUT_EXCHANGE required")
-	}
-
-	controlExchange := mustEnv("EOF_CONTROL_EXCHANGE")
-	controlKey := mustEnv("EOF_CONTROL_KEY")
-
-	accountsUpstream := mustEnvInt("ACCOUNTS_UPSTREAM_INSTANCES")
-	maxUpstream := mustEnvInt("MAX_PER_BANK_UPSTREAM_INSTANCES")
-
 	inputMW, err := middleware.NewExchangeMiddleware(
-		inputExchange,
-		[]string{inputKey},
+		mustEnv("INPUT_EXCHANGE"),
+		[]string{mustEnv("INPUT_KEY")},
 		conn,
 	)
 	if err != nil {
@@ -38,64 +23,24 @@ func main() {
 	}
 	defer inputMW.Close()
 
-	var outputMW middleware.Middleware
-
-	if outputExchange != "" {
-		outputMW, err = middleware.NewExchangeMiddleware(
-			outputExchange,
-			[]string{outputKey},
-			conn,
-		)
-	} else {
-		outputMW, err = middleware.NewQueueMiddleware(
-			outputQueue,
-			conn,
-		)
-	}
-
+	outputMW, err := middleware.NewQueueMiddleware(mustEnv("OUTPUT_QUEUE"), conn)
 	if err != nil {
 		log.Fatalf("[join_q2] output middleware: %v", err)
 	}
 	defer outputMW.Close()
 
-	controlPub, err := middleware.NewExchangeMiddleware(
-		controlExchange,
-		[]string{controlKey},
-		conn,
-	)
-	if err != nil {
-		log.Fatalf("[join_q2] control publisher: %v", err)
+	accountsUpstream := mustEnvInt("ACCOUNTS_UPSTREAM_INSTANCES")
+	maxUpstream := mustEnvInt("MAX_PER_BANK_UPSTREAM_INSTANCES")
+
+	classify := func(batch protocol.Batch) bool {
+		return batch.DataType == "accounts" || batch.Type == protocol.BatchTypeAccounts
 	}
-	defer controlPub.Close()
 
-	controlSub, err := middleware.NewExchangeMiddleware(
-		controlExchange,
-		[]string{controlKey},
-		conn,
-	)
-	if err != nil {
-		log.Fatalf("[join_q2] control subscriber: %v", err)
-	}
-	defer controlSub.Close()
+	svc := node.NewJoin("join_q2", accountsUpstream, maxUpstream, classify)
 
-	node := newJoinQ2(
-		inputMW,
-		outputMW,
-		controlPub,
-		controlSub,
-		accountsUpstream,
-		maxUpstream,
-	)
+	log.Printf("[join_q2] started accounts_upstream=%d max_upstream=%d", accountsUpstream, maxUpstream)
 
-	defer node.Close()
-
-	log.Printf(
-		"[join_q2] started accounts_upstream=%d max_upstream=%d",
-		accountsUpstream,
-		maxUpstream,
-	)
-
-	node.Run()
+	svc.Run(inputMW, outputMW, newProcess())
 }
 
 func mustEnv(key string) string {
@@ -108,12 +53,10 @@ func mustEnv(key string) string {
 
 func mustEnvInt(key string) int {
 	v := mustEnv(key)
-
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		log.Fatalf("[join_q2] env var %s must be int: %v", key, err)
 	}
-
 	return n
 }
 

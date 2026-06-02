@@ -23,6 +23,14 @@ import (
 // and forwards one EOF downstream. Every instance does this, so
 // downstream receives N EOFs — one per running instance.
 //
+// NewJoin produces a Scalable in two-sided join mode. In join mode the
+// node counts EOFs from a left upstream (e.g. accounts) and a right
+// upstream (e.g. aggregator results) independently, forwarding the
+// downstream EOF only when both sides are satisfied. Because each join
+// instance owns its own partition queue there is no need to coordinate
+// with peer instances, so the EOF exchange only loops back to the same
+// instance.
+//
 // Additional required environment variables (beyond Node's):
 //
 //	INSTANCE_ID, INSTANCE_TOTAL  — identity within the peer group
@@ -38,7 +46,16 @@ type Scalable struct {
 	cond          *sync.Cond
 	globalPending int
 	clientPending map[string]int
-	eofCount      map[string]int // broadcasts received per client
+
+	// single-sided EOF counting (New)
+	eofCount map[string]int
+
+	// two-sided EOF counting (NewJoin)
+	leftUpstream  int
+	rightUpstream int
+	eofLeftCount  map[string]int
+	eofRightCount map[string]int
+	classifyEOF   func(protocol.Batch) bool // true = left, false = right
 }
 
 // New reads instance identity and connection settings from the environment.
@@ -56,20 +73,49 @@ func New(name string) *Scalable {
 	return s
 }
 
+// NewJoin creates a Scalable in two-sided join mode. leftUpstream and
+// rightUpstream are the expected EOF counts from each side. classify
+// returns true for left-side EOFs and false for right-side EOFs.
+//
+// In join mode the EOF exchange only routes to the calling instance
+// (no peer broadcast), since each join instance owns its own partition.
+func NewJoin(name string, leftUpstream, rightUpstream int, classify func(protocol.Batch) bool) *Scalable {
+	s := &Scalable{
+		Node:          newNode(),
+		name:          name,
+		instanceID:    mustInt("INSTANCE_ID"),
+		instanceTotal: mustInt("INSTANCE_TOTAL"),
+		clientPending: make(map[string]int),
+		eofCount:      make(map[string]int),
+		leftUpstream:  leftUpstream,
+		rightUpstream: rightUpstream,
+		eofLeftCount:  make(map[string]int),
+		eofRightCount: make(map[string]int),
+		classifyEOF:   classify,
+	}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
 // Run sets up the internal EOF broadcast exchange, subscribes this instance
 // to its own receiver queue, and starts both consumer goroutines.
 // It blocks until both goroutines finish (SIGTERM or queue closed).
-//
-// Overrides Node.Run with the full peer-coordination logic.
 func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
-	allKeys := make([]string, s.instanceTotal)
-	for i := 0; i < s.instanceTotal; i++ {
-		allKeys[i] = fmt.Sprintf("%s_%d", s.name, i+1)
-	}
 	ownKey := fmt.Sprintf("%s_%d", s.name, s.instanceID)
 	eofExchange := config.EnvOrDefault("EOF_EXCHANGE", s.name+"_eof")
 
-	eofBroadcast, err := middleware.CreateExchangeMiddleware(eofExchange, allKeys, s.conn)
+	// In join mode each instance only routes EOFs to itself — no peer broadcast.
+	var broadcastKeys []string
+	if s.leftUpstream > 0 {
+		broadcastKeys = []string{ownKey}
+	} else {
+		broadcastKeys = make([]string, s.instanceTotal)
+		for i := 0; i < s.instanceTotal; i++ {
+			broadcastKeys[i] = fmt.Sprintf("%s_%d", s.name, i+1)
+		}
+	}
+
+	eofBroadcast, err := middleware.CreateExchangeMiddleware(eofExchange, broadcastKeys, s.conn)
 	if err != nil {
 		log.Fatalf("[%s] connect to EOF broadcast exchange: %v", s.name, err)
 	}
@@ -81,7 +127,12 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 	}
 	defer eofReceiver.Close()
 
-	log.Printf("[%s] %d/%d started (upstream=%d)", s.name, s.instanceID, s.instanceTotal, s.upstreamCount)
+	if s.leftUpstream > 0 {
+		log.Printf("[%s] %d/%d started (left_upstream=%d right_upstream=%d)",
+			s.name, s.instanceID, s.instanceTotal, s.leftUpstream, s.rightUpstream)
+	} else {
+		log.Printf("[%s] %d/%d started (upstream=%d)", s.name, s.instanceID, s.instanceTotal, s.upstreamCount)
+	}
 
 	var wg sync.WaitGroup
 
@@ -190,20 +241,37 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 			return
 		}
 
+		clientID := batch.ClientID
+
+		// Count EOFs — single-sided or two-sided depending on mode.
+		var ready bool
 		s.mu.Lock()
-		s.eofCount[batch.ClientID]++
-		count := s.eofCount[batch.ClientID]
+		if s.leftUpstream > 0 {
+			if s.classifyEOF(batch) {
+				s.eofLeftCount[clientID]++
+			} else {
+				s.eofRightCount[clientID]++
+			}
+			left := s.eofLeftCount[clientID]
+			right := s.eofRightCount[clientID]
+			ready = left >= s.leftUpstream && right >= s.rightUpstream
+			log.Printf("[%s] EOF client=%s left=%d/%d right=%d/%d",
+				s.name, clientID, left, s.leftUpstream, right, s.rightUpstream)
+		} else {
+			s.eofCount[clientID]++
+			count := s.eofCount[clientID]
+			ready = count >= s.upstreamCount
+			log.Printf("[%s] EOF broadcast client=%s (%d/%d)", s.name, clientID, count, s.upstreamCount)
+		}
 		s.mu.Unlock()
 
-		log.Printf("[%s] EOF broadcast client=%s (%d/%d)", s.name, batch.ClientID, count, s.upstreamCount)
-
-		if count < s.upstreamCount {
+		if !ready {
 			ack()
 			return
 		}
 
 		s.mu.Lock()
-		for s.globalPending > 0 || s.clientPending[batch.ClientID] > 0 {
+		for s.globalPending > 0 || s.clientPending[clientID] > 0 {
 			s.cond.Wait()
 		}
 		s.mu.Unlock()
@@ -217,29 +285,38 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		// outputMW.Send so the EOF is not duplicated.
 		if result, ok := fn(batch); ok {
 			if result.Type == protocol.BatchTypeEOF {
-				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, batch.ClientID)
+				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, clientID)
 				ack()
 				return
 			}
 			data, err := json.Marshal(result)
 			if err != nil {
-				log.Printf("[%s] marshal flush result client=%s: %v", s.name, batch.ClientID, err)
+				log.Printf("[%s] marshal flush result client=%s: %v", s.name, clientID, err)
 				nack()
 				return
 			}
 			if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
-				log.Printf("[%s] send flush result client=%s: %v", s.name, batch.ClientID, err)
+				log.Printf("[%s] send flush result client=%s: %v", s.name, clientID, err)
 				nack()
 				return
 			}
 		}
 
 		if err := outputMW.Send(msg); err != nil {
-			log.Printf("[%s] send EOF client=%s: %v", s.name, batch.ClientID, err)
+			log.Printf("[%s] send EOF client=%s: %v", s.name, clientID, err)
 			nack()
 			return
 		}
-		log.Printf("[%s] EOF forwarded client=%s", s.name, batch.ClientID)
+		log.Printf("[%s] EOF forwarded client=%s", s.name, clientID)
+
+		if s.leftUpstream > 0 {
+			s.mu.Lock()
+			delete(s.eofLeftCount, clientID)
+			delete(s.eofRightCount, clientID)
+			delete(s.clientPending, clientID)
+			s.mu.Unlock()
+		}
+
 		ack()
 	}
 }

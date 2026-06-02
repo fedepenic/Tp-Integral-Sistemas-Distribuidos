@@ -2,7 +2,6 @@ package main
 
 import "github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 
-// maxPerBankResult mirrors the output of the max_per_bank node.
 type maxPerBankResult struct {
 	BankID        string  `json:"bank_id"`
 	BankName      string  `json:"bank_name"`

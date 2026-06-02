@@ -88,7 +88,6 @@ SERVICES = [
         "EOF_EXCHANGE":             "cleaner_eof",
         "ACCOUNTS_JOIN_EXCHANGE":   "join_q2_input",
         "ACCOUNTS_JOIN_KEY_PREFIX": "joinq2",
-        "ACCOUNTS_JOIN_PARTITIONS": "1",
     }),
     # UPSTREAM_INSTANCES = N_WIREACH_FILTER: each wireach_filter instance sends its own EOF.
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {
@@ -172,11 +171,9 @@ JOINERS = [
         "cmd/joiners/join_q2/Dockerfile",
         "N_JOIN_Q2",
         {
-            "INPUT_EXCHANGE":         "join_q2_input",
-            "INPUT_KEY_PREFIX":       "joinq2",
-            "OUTPUT_QUEUE":           "q2_data",
-            "EOF_CONTROL_EXCHANGE":   "eof_join_q2",
-            "EOF_CONTROL_KEY_PREFIX": "join_q2",
+            "INPUT_EXCHANGE":   "join_q2_input",
+            "INPUT_KEY_PREFIX": "joinq2",
+            "OUTPUT_QUEUE":     "q2_data",
         },
     ),
     (
@@ -206,6 +203,10 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
 
 
 def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "cleaner":
+        return {
+            "ACCOUNTS_JOIN_PARTITIONS": env.get("N_JOIN_Q2", "1"),
+        }
     return {}
 
 

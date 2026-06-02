@@ -161,27 +161,3 @@ type AggregatorLogic[T any, K comparable, S any, O any] interface {
 	Finalize(key K, state S) []O
 }
 
-type JoinerBatchExtractor[T any] func(batch protocol.Batch) ([]T, bool)
-
-type JoinerLogic[L any, R any, S any, O any] interface {
-	Zero() S
-	ProcessLeft(state S, item L) (S, []O)
-	ProcessRight(state S, item R) (S, []O)
-	Flush(state S) []O
-}
-
-type JoinerConfig[L any, R any] struct {
-	Name string
-
-	Input      middleware.Middleware
-	Output     middleware.Middleware
-	ControlPub middleware.Middleware
-	ControlSub middleware.Middleware
-
-	ExtractLeft  JoinerBatchExtractor[L]
-	ExtractRight JoinerBatchExtractor[R]
-
-	LeftUpstreamInstances  int
-	RightUpstreamInstances int
-	OutputDataType         string
-}

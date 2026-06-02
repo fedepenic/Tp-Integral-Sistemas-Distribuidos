@@ -5,35 +5,18 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/joiners"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
 func main() {
 	conn := connSettings()
 
-	inputQueue := mustEnv("INPUT_QUEUE_NAME")
-	inputKey := mustEnv("INPUT_KEY")
-	avgInputExchange := mustEnv("AVG_INPUT_EXCHANGE")
-	txnInputExchange := mustEnv("TXN_INPUT_EXCHANGE")
-
-	outputQueue := os.Getenv("OUTPUT_QUEUE")
-	outputExchange := os.Getenv("OUTPUT_EXCHANGE")
-	outputKey := os.Getenv("OUTPUT_KEY")
-	if outputQueue == "" && outputExchange == "" {
-		log.Fatalf("[join_q3] OUTPUT_QUEUE or OUTPUT_EXCHANGE required")
-	}
-
-	controlExchange := mustEnv("EOF_CONTROL_EXCHANGE")
-	controlKey := mustEnv("EOF_CONTROL_KEY")
-
-	avgUpstream := mustEnvInt("AVG_UPSTREAM_INSTANCES")
-	txnUpstream := mustEnvInt("TXN_UPSTREAM_INSTANCES")
-
 	inputMW, err := middleware.NewSharedQueueMultiExchangeMiddleware(
-		inputQueue,
-		[]string{avgInputExchange, txnInputExchange},
-		[]string{inputKey},
+		mustEnv("INPUT_QUEUE_NAME"),
+		[]string{mustEnv("AVG_INPUT_EXCHANGE"), mustEnv("TXN_INPUT_EXCHANGE")},
+		[]string{mustEnv("INPUT_KEY")},
 		conn,
 	)
 	if err != nil {
@@ -41,65 +24,31 @@ func main() {
 	}
 	defer inputMW.Close()
 
-	var outputMW middleware.Middleware
-	if outputExchange != "" {
-		outputMW, err = middleware.NewExchangeMiddleware(
-			outputExchange,
-			[]string{outputKey},
-			conn,
-		)
-	} else {
-		outputMW, err = middleware.NewQueueMiddleware(
-			outputQueue,
-			conn,
-		)
-	}
+	outputMW, err := buildOutputMW(conn)
 	if err != nil {
 		log.Fatalf("[join_q3] output middleware: %v", err)
 	}
 	defer outputMW.Close()
 
-	controlPub, err := middleware.NewExchangeMiddleware(
-		controlExchange,
-		[]string{controlKey},
-		conn,
-	)
-	if err != nil {
-		log.Fatalf("[join_q3] control publisher: %v", err)
+	avgUpstream := mustEnvInt("AVG_UPSTREAM_INSTANCES")
+	txnUpstream := mustEnvInt("TXN_UPSTREAM_INSTANCES")
+
+	classify := func(batch protocol.Batch) bool {
+		return batch.DataType == avgPerFormatDataType
 	}
-	defer controlPub.Close()
 
-	controlSub, err := middleware.NewExchangeMiddleware(
-		controlExchange,
-		[]string{controlKey},
-		conn,
-	)
-	if err != nil {
-		log.Fatalf("[join_q3] control subscriber: %v", err)
+	svc := node.NewJoin("join_q3", avgUpstream, txnUpstream, classify)
+
+	log.Printf("[join_q3] started avg_upstream=%d txn_upstream=%d", avgUpstream, txnUpstream)
+
+	svc.Run(inputMW, outputMW, newProcess())
+}
+
+func buildOutputMW(conn middleware.ConnSettings) (middleware.Middleware, error) {
+	if exchange := os.Getenv("OUTPUT_EXCHANGE"); exchange != "" {
+		return middleware.NewExchangeMiddleware(exchange, []string{os.Getenv("OUTPUT_KEY")}, conn)
 	}
-	defer controlSub.Close()
-
-	node := joiners.NewJoinQ3(
-		inputMW,
-		outputMW,
-		controlPub,
-		controlSub,
-		avgUpstream,
-		txnUpstream,
-	)
-	defer node.Close()
-
-	log.Printf(
-		"[join_q3] started queue=%s key=%s avg_exchange=%s txn_exchange=%s avg_upstream=%d txn_upstream=%d",
-		inputQueue,
-		inputKey,
-		avgInputExchange,
-		txnInputExchange,
-		avgUpstream,
-		txnUpstream,
-	)
-
-	node.Run()
+	return middleware.NewQueueMiddleware(mustEnv("OUTPUT_QUEUE"), conn)
 }
 
 func mustEnv(key string) string {
