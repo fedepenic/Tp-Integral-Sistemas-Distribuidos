@@ -18,5 +18,7 @@ func main() {
 	directMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer directMW.Close()
 
-	svc.Run(inputMW, fanoutMW, newProcess(directMW))
+	directKey := config.MustEnv("OUTPUT_DIRECT_KEY")
+
+	svc.Run(inputMW, fanoutMW, newProcess(directMW, directKey))
 }

@@ -35,6 +35,7 @@ NAMED_FILTERS = [
         "EOF_BROADCAST_EXCHANGE": "usd_filter_eof",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
         "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
+        "OUTPUT_DIRECT_KEY":      "maxbank",
     }),
     # amt50_filter: same coordinated pattern. UPSTREAM_INSTANCES=N_USD_FILTER
     # because each upstream usd_filter sends its own EOF per client.
@@ -79,12 +80,15 @@ NAMED_FILTERS = [
 
 SERVICES = [
     ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
-        "INPUT_QUEUE":     "raw_transactions",
-        "OUTPUT_EXCHANGE": "transactions_clean",
-        "OUTPUT_KEYS":     "txn_for_usd,txn_for_q5",
-        "RABBITMQ_HOST":   "rabbitmq",
-        "RABBITMQ_PORT":   "5672",
-        "EOF_EXCHANGE":    "cleaner_eof",
+        "INPUT_QUEUE":              "raw_transactions",
+        "OUTPUT_EXCHANGE":          "transactions_clean",
+        "OUTPUT_KEYS":              "txn_for_usd,txn_for_q5",
+        "RABBITMQ_HOST":            "rabbitmq",
+        "RABBITMQ_PORT":            "5672",
+        "EOF_EXCHANGE":             "cleaner_eof",
+        "ACCOUNTS_JOIN_EXCHANGE":   "join_q2_input",
+        "ACCOUNTS_JOIN_KEY_PREFIX": "joinq2",
+        "ACCOUNTS_JOIN_PARTITIONS": "1",
     }),
     # UPSTREAM_INSTANCES = N_WIREACH_FILTER: each wireach_filter instance sends its own EOF.
     ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {

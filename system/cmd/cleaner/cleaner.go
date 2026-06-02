@@ -1,34 +1,84 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
-func newProcess() node.ProcessFunc {
+func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions int) node.ProcessFunc {
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
-		log.Printf("[cleaner] client=%s type=%s txns=%d accounts=%d",
-			batch.ClientID, batch.Type, len(batch.Transactions), len(batch.Accounts))
-
-		cleaned := protocol.Batch{Type: batch.Type, ClientID: batch.ClientID}
 		switch batch.Type {
 		case protocol.BatchTypeTransactions:
-			cleaned.Transactions = cleanTransactions(batch.Transactions)
+			cleaned := cleanTransactions(batch.Transactions)
+			if len(cleaned) == 0 {
+				return protocol.Batch{}, false
+			}
+			return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: cleaned}, true
+
 		case protocol.BatchTypeAccounts:
-			cleaned.Accounts = cleanAccounts(batch.Accounts)
-		}
+			cleaned := cleanAccounts(batch.Accounts)
+			if len(cleaned) > 0 {
+				sendAccountBatches(accountsMW, batch.ClientID, cleaned, keyPrefix, partitions)
+			}
+			return protocol.Batch{}, false
 
-		log.Printf("[cleaner] client=%s type=%s in=%d out=%d",
-			batch.ClientID, batch.Type,
-			len(batch.Transactions)+len(batch.Accounts),
-			len(cleaned.Transactions)+len(cleaned.Accounts))
-
-		if cleaned.Type != protocol.BatchTypeTransactions {
+		case protocol.BatchTypeEOF:
+			// Send one accounts EOF per join_q2 partition so the joiner knows
+			// the left side is done. Return false so Scalable still forwards
+			// the transactions EOF on outputMW.
+			sendAccountsEOF(accountsMW, batch.ClientID, keyPrefix, partitions)
 			return protocol.Batch{}, false
 		}
-		return cleaned, true
+		return protocol.Batch{}, false
+	}
+}
+
+func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []protocol.Account, keyPrefix string, partitions int) {
+	partitioned := make(map[int][]protocol.Account, partitions)
+	for _, a := range accounts {
+		p := worker.PartitionForKey(a.BankID, partitions)
+		partitioned[p] = append(partitioned[p], a)
+	}
+	for p, batch := range partitioned {
+		key := worker.RoutingKey(keyPrefix, p)
+		out := protocol.Batch{
+			Type:     protocol.BatchTypeAccounts,
+			ClientID: clientID,
+			DataType: "accounts",
+			Accounts: batch,
+		}
+		data, err := json.Marshal(out)
+		if err != nil {
+			log.Printf("[cleaner] marshal accounts partition=%d: %v", p, err)
+			continue
+		}
+		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
+			log.Printf("[cleaner] send accounts partition=%d: %v", p, err)
+		}
+	}
+}
+
+func sendAccountsEOF(mw middleware.Middleware, clientID string, keyPrefix string, partitions int) {
+	eof := protocol.Batch{
+		Type:     protocol.BatchTypeEOF,
+		ClientID: clientID,
+		DataType: "accounts",
+	}
+	data, err := json.Marshal(eof)
+	if err != nil {
+		log.Printf("[cleaner] marshal accounts EOF: %v", err)
+		return
+	}
+	for p := 0; p < partitions; p++ {
+		key := worker.RoutingKey(keyPrefix, p)
+		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
+			log.Printf("[cleaner] send accounts EOF partition=%d: %v", p, err)
+		}
 	}
 }
 
