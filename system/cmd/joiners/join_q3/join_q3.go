@@ -5,7 +5,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/aggregators"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -48,7 +47,7 @@ func newProcess() node.ProcessFunc {
 		var results []protocol.Transaction
 
 		if batch.DataType == avgPerFormatDataType && len(batch.Records) > 0 {
-			var avgs []aggregators.AvgPerPaymentFormatResult
+			var avgs []avgPerFormatResult
 			if err := json.Unmarshal(batch.Records, &avgs); err != nil {
 				log.Printf("[join_q3] malformed avg_per_format records: %v", err)
 				states[batch.ClientID] = state

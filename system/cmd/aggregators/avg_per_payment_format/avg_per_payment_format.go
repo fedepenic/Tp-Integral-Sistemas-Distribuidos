@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/aggregators"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -57,13 +56,13 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 	}
 	delete(m.state, clientID)
 
-	partitioned := make(map[int][]aggregators.AvgPerPaymentFormatResult)
+	partitioned := make(map[int][]avgPerFormatResult)
 	for format, s := range formats {
 		if s.count == 0 {
 			continue
 		}
 		p := worker.PartitionForKey(format, m.outputPartitions)
-		partitioned[p] = append(partitioned[p], aggregators.AvgPerPaymentFormatResult{
+		partitioned[p] = append(partitioned[p], avgPerFormatResult{
 			PaymentFormat: format,
 			AvgAmount:     s.sum / float64(s.count),
 		})
