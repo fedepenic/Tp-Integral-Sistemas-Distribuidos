@@ -308,27 +308,6 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  joiner_sg_1:
-    build:
-      context: .
-      dockerfile: cmd/joiners/joiner_sg/Dockerfile
-    environment:
-      - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - INPUT_QUEUE_NAME=joiner_sg_input_0
-      - INPUT_KEY=joinersg_0
-      - FO_INPUT_EXCHANGE=scatter_gather_fo
-      - FI_INPUT_EXCHANGE=scatter_gather_fi
-      - OUTPUT_EXCHANGE=scatter_gather_data
-      - OUTPUT_KEY=scatter_gather
-      - FO_UPSTREAM_INSTANCES=1
-      - FI_UPSTREAM_INSTANCES=1
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
   scatter_gather_1:
     build:
       context: .
@@ -418,6 +397,27 @@ services:
       - OUTPUT_QUEUE=q3_candidates
       - AVG_UPSTREAM_INSTANCES=2
       - TXN_UPSTREAM_INSTANCES=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_sg_1:
+    build:
+      context: .
+      dockerfile: cmd/joiners/joiner_sg/Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_KEY=joinersg_0
+      - INPUT_QUEUE_NAME=joiner_sg_input_0
+      - FO_INPUT_EXCHANGE=scatter_gather_fo
+      - FI_INPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_KEY=scatter_gather
+      - FO_UPSTREAM_INSTANCES=1
+      - FI_UPSTREAM_INSTANCES=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -662,11 +662,11 @@ services:
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FO_KEY_PREFIX=fo
-      - OUTPUT_Q4_FO_PARTITIONS=1
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
       - OUTPUT_Q4_FI_KEY_PREFIX=fi
-      - OUTPUT_Q4_FI_PARTITIONS=1
       - OUTPUT_Q3_PARTITIONS=2
+      - OUTPUT_Q4_FO_PARTITIONS=1
+      - OUTPUT_Q4_FI_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -690,11 +690,11 @@ services:
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FO_KEY_PREFIX=fo
-      - OUTPUT_Q4_FO_PARTITIONS=1
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
       - OUTPUT_Q4_FI_KEY_PREFIX=fi
-      - OUTPUT_Q4_FI_PARTITIONS=1
       - OUTPUT_Q3_PARTITIONS=2
+      - OUTPUT_Q4_FO_PARTITIONS=1
+      - OUTPUT_Q4_FI_PARTITIONS=1
     depends_on:
       rabbitmq:
         condition: service_healthy

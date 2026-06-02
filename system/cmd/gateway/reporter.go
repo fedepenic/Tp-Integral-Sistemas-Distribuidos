@@ -63,6 +63,19 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 	key := clientID + "/" + queryID
 	w, ok := r.writers[key]
 	if !ok {
+		// No data arrived — still create an empty file with headers so the
+		// comparison script finds a file even when the query has no results.
+		w, err := r.writerFor(clientID, queryID)
+		if err != nil {
+			log.Printf("reporter: create empty file client %s query %s: %v", clientID, queryID, err)
+			return
+		}
+		if !w.headerWritten {
+			writeEmptyHeaders(w, queryID)
+		}
+		w.csv.Flush()
+		w.file.Close()
+		delete(r.writers, key)
 		return
 	}
 	w.csv.Flush()
@@ -70,6 +83,23 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 		log.Printf("reporter: close file for client %s query %s: %v", clientID, queryID, err)
 	}
 	delete(r.writers, key)
+}
+
+// writeEmptyHeaders writes the column headers for a query with no result rows.
+func writeEmptyHeaders(w *queryWriter, queryID string) {
+	switch queryID {
+	case "1":
+		w.csv.Write([]string{"From Bank", "Account", "To Bank", "Account.1", "Amount Paid"})
+	case "2":
+		w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
+	case "3":
+		w.csv.Write([]string{"From Bank", "Account", "Payment Format", "Amount Paid"})
+	case "4":
+		w.csv.Write([]string{"Bank", "Account"})
+	case "5":
+		w.csv.Write([]string{"quantity"})
+	}
+	w.headerWritten = true
 }
 
 func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
