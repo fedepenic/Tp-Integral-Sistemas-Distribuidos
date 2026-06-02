@@ -9,7 +9,7 @@ func main() {
 	svc := node.New("max_per_bank")
 	conn := svc.Conn()
 
-	inputMW := config.SharedQueueWithKey("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", "INPUT_KEY", conn)
+	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{}, conn)

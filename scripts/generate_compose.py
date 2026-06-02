@@ -34,8 +34,8 @@ NAMED_FILTERS = [
         "INPUT_KEY":              "txn_for_usd",
         "EOF_BROADCAST_EXCHANGE": "usd_filter_eof",
         "OUTPUT_FANOUT_EXCHANGE": "usd_filtered",
-        "OUTPUT_DIRECT_EXCHANGE": "usd_for_q2",
-        "OUTPUT_DIRECT_KEY":      "maxbank",
+        "OUTPUT_DIRECT_EXCHANGE":    "usd_for_q2",
+        "OUTPUT_DIRECT_KEY_PREFIX": "maxbank",
     }),
     # amt50_filter: same coordinated pattern. UPSTREAM_INSTANCES=N_USD_FILTER
     # because each upstream usd_filter sends its own EOF per client.
@@ -107,10 +107,9 @@ AGGREGATORS = [
         "N_MAXBANK",
         "N_USD_FILTER",
         {
-            "INPUT_QUEUE_NAME": "max_per_bank_input",
-            "INPUT_EXCHANGE":   "usd_for_q2",
-            "INPUT_KEY":        "maxbank",
-            "OUTPUT_EXCHANGE":  "join_q2_input",
+            "INPUT_EXCHANGE":    "usd_for_q2",
+            "INPUT_KEY_PREFIX":  "maxbank",
+            "OUTPUT_EXCHANGE":   "join_q2_input",
         }
     ),
     (
@@ -196,6 +195,18 @@ JOINERS = [
         },
     ),
 ]
+
+
+def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    if name == "usd_filter":
+        return {
+            "OUTPUT_DIRECT_PARTITIONS": env.get("N_MAXBANK", "1"),
+        }
+    return {}
+
+
+def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+    return {}
 
 
 def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
@@ -317,7 +328,9 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - INSTANCE_TOTAL={count}")
             if upstream is not None:
                 lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
-            for k, v in extra_env.items():
+            env_map = dict(extra_env)
+            env_map.update(services_extra_env(name, env))
+            for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
@@ -440,7 +453,9 @@ def build_compose(env: dict[str, str]) -> str:
             lines.append(f"      - RABBITMQ_HOST=rabbitmq")
             lines.append(f"      - RABBITMQ_PORT=5672")
             lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
-            for k, v in extra_env.items():
+            nf_env = dict(extra_env)
+            nf_env.update(named_filters_extra_env(svc_name, env))
+            for k, v in nf_env.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")

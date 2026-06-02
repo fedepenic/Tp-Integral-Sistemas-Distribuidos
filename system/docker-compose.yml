@@ -200,13 +200,31 @@ services:
       dockerfile: cmd/aggregators/max_per_bank/Dockerfile
     environment:
       - INSTANCE_ID=1
-      - INSTANCE_TOTAL=1
+      - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=2
-      - INPUT_QUEUE_NAME=max_per_bank_input
+      - INPUT_KEY=maxbank_0
       - INPUT_EXCHANGE=usd_for_q2
-      - INPUT_KEY=maxbank
+      - OUTPUT_EXCHANGE=join_q2_input
+      - OUTPUT_KEY_PREFIX=joinq2
+      - OUTPUT_PARTITIONS=1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  max_per_bank_2:
+    build:
+      context: .
+      dockerfile: cmd/aggregators/max_per_bank/Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=maxbank_1
+      - INPUT_EXCHANGE=usd_for_q2
       - OUTPUT_EXCHANGE=join_q2_input
       - OUTPUT_KEY_PREFIX=joinq2
       - OUTPUT_PARTITIONS=1
@@ -311,7 +329,7 @@ services:
       - OUTPUT_QUEUE=q2_data
       - EOF_CONTROL_EXCHANGE=eof_join_q2
       - ACCOUNTS_UPSTREAM_INSTANCES=3
-      - MAX_PER_BANK_UPSTREAM_INSTANCES=1
+      - MAX_PER_BANK_UPSTREAM_INSTANCES=2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -431,7 +449,8 @@ services:
       - EOF_BROADCAST_EXCHANGE=usd_filter_eof
       - OUTPUT_FANOUT_EXCHANGE=usd_filtered
       - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
-      - OUTPUT_DIRECT_KEY=maxbank
+      - OUTPUT_DIRECT_KEY_PREFIX=maxbank
+      - OUTPUT_DIRECT_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -454,7 +473,8 @@ services:
       - EOF_BROADCAST_EXCHANGE=usd_filter_eof
       - OUTPUT_FANOUT_EXCHANGE=usd_filtered
       - OUTPUT_DIRECT_EXCHANGE=usd_for_q2
-      - OUTPUT_DIRECT_KEY=maxbank
+      - OUTPUT_DIRECT_KEY_PREFIX=maxbank
+      - OUTPUT_DIRECT_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
