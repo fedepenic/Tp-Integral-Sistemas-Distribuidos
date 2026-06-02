@@ -23,6 +23,15 @@ func main() {
 
 	q3KeyPrefix  := config.EnvOrDefault("OUTPUT_Q3_KEY_PREFIX", "avgfmt")
 	q3Partitions := config.MustEnvInt("OUTPUT_Q3_PARTITIONS")
+	foKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FO_KEY_PREFIX", "fo")
+	foPartitions := config.MustEnvInt("OUTPUT_Q4_FO_PARTITIONS")
+	fiKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FI_KEY_PREFIX", "fi")
+	fiPartitions := config.MustEnvInt("OUTPUT_Q4_FI_PARTITIONS")
 
-	svc.Run(inputMW, outQ3MW, newProcess(outQ3MW, outFOMW, outFIMW, q3KeyPrefix, q3Partitions))
+	svc.Run(inputMW, outQ3MW, newProcess(
+		outQ3MW, outFOMW, outFIMW,
+		q3KeyPrefix, q3Partitions,
+		foKeyPrefix, foPartitions,
+		fiKeyPrefix, fiPartitions,
+	))
 }

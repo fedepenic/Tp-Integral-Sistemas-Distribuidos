@@ -17,6 +17,7 @@ type queryWriter struct {
 	file          *os.File
 	csv           *csv.Writer
 	headerWritten bool
+	seenAccounts  map[string]bool // for deduplication (Q4)
 }
 
 // reporter consumes from the reports queue and writes results to CSV files,
@@ -97,6 +98,13 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		log.Printf("reporter: count received client=%s query=%s count=%d", batch.ClientID, batch.QueryID, batch.Count)
 		if err := r.writeCount(w, batch.Count); err != nil {
 			log.Printf("reporter: write count for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
+	} else if batch.QueryID == "4" {
+		log.Printf("reporter: q4 batch client=%s records=%d", batch.ClientID, len(batch.Records))
+		if err := writeQ4Rows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
 			nack()
 			return
 		}

@@ -6,3 +6,11 @@ type maxPerBankResult struct {
 	SourceAccount string  `json:"source_account"`
 	MaxAmountUSD  float64 `json:"max_amount_usd"`
 }
+
+type scatterGatherResult struct {
+	FromBank    string `json:"from_bank"`
+	FromAccount string `json:"from_account"`
+	ToBank      string `json:"to_bank"`
+	ToAccount   string `json:"to_account"`
+	TargetCount int    `json:"target_count"`
+}

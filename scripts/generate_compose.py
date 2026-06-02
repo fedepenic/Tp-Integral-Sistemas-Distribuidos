@@ -14,6 +14,7 @@ SINKS = [
     ("1", "q1_data", "N_AMT50_FILTER"),
     ("2", "q2_data", "N_JOIN_Q2"),
     ("3", "q3_data", "N_AMT_AVG_FILTER"),
+    ("4", "q5_data",  "N_SG"),
     ("5", "q5_count", "N_COUNTER_Q5"),  # N_COUNTER_Q5 defaults to 1
 ]
 
@@ -56,10 +57,12 @@ NAMED_FILTERS = [
         "INPUT_QUEUE_NAME":       "period1_filter_input",
         "INPUT_EXCHANGE":         "usd_filtered",
         "EOF_BROADCAST_EXCHANGE": "period1_filter_eof",
-        "OUTPUT_Q3_EXCHANGE":     "usd_period1_for_q3",
-        "OUTPUT_Q3_KEY_PREFIX":   "avgfmt",
-        "OUTPUT_Q4_FO_EXCHANGE":  "usd_period1_for_q4_fo",
-        "OUTPUT_Q4_FI_EXCHANGE":  "usd_period1_for_q4_fi",
+        "OUTPUT_Q3_EXCHANGE":      "usd_period1_for_q3",
+        "OUTPUT_Q3_KEY_PREFIX":    "avgfmt",
+        "OUTPUT_Q4_FO_EXCHANGE":   "usd_period1_for_q4_fo",
+        "OUTPUT_Q4_FO_KEY_PREFIX": "fo",
+        "OUTPUT_Q4_FI_EXCHANGE":   "usd_period1_for_q4_fi",
+        "OUTPUT_Q4_FI_KEY_PREFIX": "fi",
     }),
     ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
         "INPUT_QUEUE":  "q3_candidates",
@@ -213,7 +216,9 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         }
     if name == "period1_filter":
         return {
-            "OUTPUT_Q3_PARTITIONS": env.get("N_AVG_PER_PAY", "1"),
+            "OUTPUT_Q3_PARTITIONS":    env.get("N_AVG_PER_PAY", "1"),
+            "OUTPUT_Q4_FO_PARTITIONS": env.get("N_FO", "1"),
+            "OUTPUT_Q4_FI_PARTITIONS": env.get("N_FI", "1"),
         }
     return {}
 
