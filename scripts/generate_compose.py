@@ -46,8 +46,9 @@ NAMED_FILTERS = [
         "OUTPUT_QUEUE":           "q1_data",
     }),
     ("period2_filter", "period2_filter", "N_PERIOD2_FILTER", None, {
-        "INPUT_QUEUE":     "usd_for_q3p2",
-        "OUTPUT_EXCHANGE": "usd_period2",
+        "INPUT_QUEUE":       "usd_for_q3p2",
+        "OUTPUT_EXCHANGE":   "usd_period2",
+        "OUTPUT_KEY_PREFIX": "joinerformat",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
         "INPUT_QUEUE":           "usd_for_p1",
@@ -55,7 +56,7 @@ NAMED_FILTERS = [
         "OUTPUT_Q4_FO_EXCHANGE": "usd_period1_for_q4_fo",
         "OUTPUT_Q4_FI_EXCHANGE": "usd_period1_for_q4_fi",
     }),
-    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", None, {
+    ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
         "INPUT_QUEUE":  "q3_candidates",
         "OUTPUT_QUEUE": "q3_data",
     }),
@@ -183,10 +184,7 @@ JOINERS = [
             "INPUT_KEY_PREFIX":        "joinerformat",
             "AVG_INPUT_EXCHANGE":      "avg_per_format",
             "TXN_INPUT_EXCHANGE":      "usd_period2",
-            "OUTPUT_EXCHANGE":         "q3_candidates",
-            "OUTPUT_KEY":              "",
-            "EOF_CONTROL_EXCHANGE":    "eof_join_q3",
-            "EOF_CONTROL_KEY_PREFIX":  "join_q3",
+            "OUTPUT_QUEUE":            "q3_candidates",
         },
     ),
 ]
@@ -196,6 +194,10 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "usd_filter":
         return {
             "OUTPUT_DIRECT_PARTITIONS": env.get("N_MAXBANK", "1"),
+        }
+    if name == "period2_filter":
+        return {
+            "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1"),
         }
     return {}
 

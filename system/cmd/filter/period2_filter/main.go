@@ -12,8 +12,11 @@ func main() {
 	inputMW := config.Queue("INPUT_QUEUE", conn)
 	defer inputMW.Close()
 
-	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{""}, conn)
+	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{}, conn)
 	defer outputMW.Close()
 
-	svc.Run(inputMW, outputMW, newProcess(outputMW))
+	keyPrefix  := config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinerformat")
+	partitions := config.MustEnvInt("OUTPUT_PARTITIONS")
+
+	svc.Run(inputMW, outputMW, newProcess(outputMW, keyPrefix, partitions))
 }
