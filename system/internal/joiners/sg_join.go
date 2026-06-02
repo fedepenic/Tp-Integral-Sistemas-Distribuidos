@@ -18,7 +18,7 @@ type SGJoin struct {
 
 	mu           sync.Mutex
 	fanOutByMid  map[string]map[string][]aggregators.FanOutResult
-	fanInByMid   map[string]map[string][]aggregators.FanInResult
+	fanInByMid   map[string]map[string][]fanInResult
 	eofOutCount  map[string]int
 	eofInCount   map[string]int
 	eofPropagate map[string]bool
@@ -30,7 +30,7 @@ func NewSGJoin(inputMW, outputMW middleware.Middleware, upstreamTotal int) *SGJo
 		outputMW:      outputMW,
 		upstreamTotal: upstreamTotal,
 		fanOutByMid:   make(map[string]map[string][]aggregators.FanOutResult),
-		fanInByMid:    make(map[string]map[string][]aggregators.FanInResult),
+		fanInByMid:    make(map[string]map[string][]fanInResult),
 		eofOutCount:   make(map[string]int),
 		eofInCount:    make(map[string]int),
 		eofPropagate:  make(map[string]bool),
@@ -153,7 +153,7 @@ func (j *SGJoin) handleFanOut(clientID string, records json.RawMessage, ack func
 }
 
 func (j *SGJoin) handleFanIn(clientID string, records json.RawMessage, ack func(), nack func()) {
-	var results []aggregators.FanInResult
+	var results []fanInResult
 	if err := json.Unmarshal(records, &results); err != nil {
 		nack()
 		return
@@ -162,7 +162,7 @@ func (j *SGJoin) handleFanIn(clientID string, records json.RawMessage, ack func(
 	j.mu.Lock()
 	fanInMap := j.fanInByMid[clientID]
 	if fanInMap == nil {
-		fanInMap = make(map[string][]aggregators.FanInResult)
+		fanInMap = make(map[string][]fanInResult)
 		j.fanInByMid[clientID] = fanInMap
 	}
 	fanOutMap := j.fanOutByMid[clientID]

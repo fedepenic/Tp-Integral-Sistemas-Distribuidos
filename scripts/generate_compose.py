@@ -134,11 +134,9 @@ AGGREGATORS = [
         "N_FI",
         "N_PERIOD1_FILTER",
         {
-            "INPUT_EXCHANGE":       "usd_period1_for_q4_fi",
-            "INPUT_KEY_PREFIX":     "fi",
-            "OUTPUT_EXCHANGE":      "scatter_gather_fi",
-            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q4_fi",
-            "EOF_CONTROL_KEY":      "fan_in",
+            "INPUT_EXCHANGE":   "usd_period1_for_q4_fi",
+            "INPUT_KEY_PREFIX": "fi",
+            "OUTPUT_EXCHANGE":  "scatter_gather_fi",
         },
     ),
     (

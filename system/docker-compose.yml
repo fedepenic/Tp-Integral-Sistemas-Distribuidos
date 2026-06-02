@@ -283,8 +283,6 @@ services:
       - INPUT_KEY=fi_0
       - INPUT_EXCHANGE=usd_period1_for_q4_fi
       - OUTPUT_EXCHANGE=scatter_gather_fi
-      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q4_fi
-      - EOF_CONTROL_KEY=fan_in
       - OUTPUT_KEY_PREFIX=joinersg
       - OUTPUT_PARTITIONS=1
     depends_on:
