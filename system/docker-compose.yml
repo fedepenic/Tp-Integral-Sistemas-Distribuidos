@@ -245,8 +245,6 @@ services:
       - INPUT_KEY=avgfmt_0
       - INPUT_EXCHANGE=usd_period1_for_q3
       - OUTPUT_EXCHANGE=avg_per_format
-      - EOF_CONTROL_EXCHANGE=eof_usd_period1_for_q3
-      - EOF_CONTROL_KEY=avg_per_payment_format
       - OUTPUT_KEY_PREFIX=joinerformat
       - OUTPUT_PARTITIONS=1
     depends_on:

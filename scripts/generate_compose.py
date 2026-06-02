@@ -117,11 +117,9 @@ AGGREGATORS = [
         "N_AVG_PER_PAY",
         "N_PERIOD1_FILTER",
         {
-            "INPUT_EXCHANGE":       "usd_period1_for_q3",
-            "INPUT_KEY_PREFIX":     "avgfmt",
-            "OUTPUT_EXCHANGE":      "avg_per_format",
-            "EOF_CONTROL_EXCHANGE": "eof_usd_period1_for_q3",
-            "EOF_CONTROL_KEY":      "avg_per_payment_format",
+            "INPUT_EXCHANGE":   "usd_period1_for_q3",
+            "INPUT_KEY_PREFIX": "avgfmt",
+            "OUTPUT_EXCHANGE":  "avg_per_format",
         },
     ),
     (
