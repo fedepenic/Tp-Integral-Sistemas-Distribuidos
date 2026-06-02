@@ -156,11 +156,9 @@ AGGREGATORS = [
         "N_SG",
         "N_JOINER_SG",
         {
-            "INPUT_EXCHANGE":       "scatter_gather_data",
-            "INPUT_KEY":            "scatter_gather",
-            "OUTPUT_QUEUE":         "q5_data",
-            "EOF_CONTROL_EXCHANGE": "eof_scatter_gather",
-            "EOF_CONTROL_KEY":      "scatter_gather",
+            "INPUT_EXCHANGE": "scatter_gather_data",
+            "INPUT_KEY":      "scatter_gather",
+            "OUTPUT_QUEUE":   "q5_data",
         },
     ),
 ]
