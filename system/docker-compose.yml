@@ -604,6 +604,8 @@ services:
       - UPSTREAM_INSTANCES=1
       - INPUT_QUEUE=usd_for_p1
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
+      - OUTPUT_Q3_KEY_PREFIX=avgfmt
+      - OUTPUT_Q3_PARTITIONS=1
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
     depends_on:
@@ -624,6 +626,8 @@ services:
       - UPSTREAM_INSTANCES=1
       - INPUT_QUEUE=usd_for_p1
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
+      - OUTPUT_Q3_KEY_PREFIX=avgfmt
+      - OUTPUT_Q3_PARTITIONS=1
       - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
       - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
     depends_on:

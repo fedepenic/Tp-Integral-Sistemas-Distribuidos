@@ -51,10 +51,11 @@ NAMED_FILTERS = [
         "OUTPUT_KEY_PREFIX": "joinerformat",
     }),
     ("period1_filter", "period1_filter", "N_PERIOD1_FILTER", None, {
-        "INPUT_QUEUE":           "usd_for_p1",
-        "OUTPUT_Q3_EXCHANGE":    "usd_period1_for_q3",
-        "OUTPUT_Q4_FO_EXCHANGE": "usd_period1_for_q4_fo",
-        "OUTPUT_Q4_FI_EXCHANGE": "usd_period1_for_q4_fi",
+        "INPUT_QUEUE":            "usd_for_p1",
+        "OUTPUT_Q3_EXCHANGE":     "usd_period1_for_q3",
+        "OUTPUT_Q3_KEY_PREFIX":   "avgfmt",
+        "OUTPUT_Q4_FO_EXCHANGE":  "usd_period1_for_q4_fo",
+        "OUTPUT_Q4_FI_EXCHANGE":  "usd_period1_for_q4_fi",
     }),
     ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
         "INPUT_QUEUE":  "q3_candidates",
@@ -198,6 +199,10 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "period2_filter":
         return {
             "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1"),
+        }
+    if name == "period1_filter":
+        return {
+            "OUTPUT_Q3_PARTITIONS": env.get("N_AVG_PER_PAY", "1"),
         }
     return {}
 
