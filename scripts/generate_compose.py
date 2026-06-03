@@ -205,6 +205,18 @@ JOINERS = [
 ]
 
 
+def get_instance_count(env: dict[str, str], env_var: str, default: int = 1) -> int:
+    """Get instance count from env, respecting N_WORKERS global override.
+
+    If N_WORKERS > 0, uses that value for all scalable nodes.
+    Otherwise, uses the individual env_var value.
+    """
+    n_workers = int(env.get("N_WORKERS", 0))
+    if n_workers > 0:
+        return n_workers
+    return int(env.get(env_var, default))
+
+
 def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     if name == "usd_filter":
         return {
@@ -315,7 +327,7 @@ def build_compose(env: dict[str, str]) -> str:
     lines.append("")
 
     # Clients
-    n_clients = int(env.get("N_CLIENTS", 1))
+    n_clients = get_instance_count(env, "N_CLIENTS", 1)
     batch_size = int(env.get("BATCH_SIZE", 1000))
     transactions_file = env.get("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
     accounts_file = env.get("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
@@ -343,8 +355,8 @@ def build_compose(env: dict[str, str]) -> str:
         name, dockerfile, env_var = entry[0], entry[1], entry[2]
         upstream_env_var = entry[3] if len(entry) > 4 else None
         extra_env = entry[4] if len(entry) > 4 else entry[3]
-        count = int(env.get(env_var, 1))
-        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else None
+        count = get_instance_count(env, env_var, 1)
+        upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else None
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
@@ -366,8 +378,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Aggregators
     for name, dockerfile, count_env_var, upstream_env_var, extra_env in AGGREGATORS:
-        count = int(env.get(count_env_var, 1))
-        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else 1
+        count = get_instance_count(env, count_env_var, 1)
+        upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else 1
         env_map = dict(extra_env)
         env_map.update(aggregators_extra_env(name, env))
         input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
@@ -395,7 +407,7 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Joiners
     for name, dockerfile, count_env_var, extra_env in JOINERS:
-        count = int(env.get(count_env_var, 1))
+        count = get_instance_count(env, count_env_var, 1)
         env_map = dict(extra_env)
         env_map.update(joiners_extra_env(name, env))
         input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
@@ -428,7 +440,7 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Counters — single instance, aggregate transactions into a count before the sink
     for svc_name, input_queue, output_queue, upstream_env_var in COUNTERS:
-        upstream = int(env.get(upstream_env_var, 1))
+        upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  {svc_name}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
@@ -446,7 +458,7 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Sinks — always single-instance, one per query
     for query_id, input_queue, upstream_env_var in SINKS:
-        upstream = int(env.get(upstream_env_var, 1))
+        upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
@@ -465,8 +477,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Named filters — instance count driven by .env, with specific build args and env vars
     for svc_name, filter_name, count_env_var, upstream_env_var, extra_env in NAMED_FILTERS:
-        count = int(env.get(count_env_var, 1))
-        upstream = int(env.get(upstream_env_var, 1)) if upstream_env_var else 1
+        count = get_instance_count(env, count_env_var, 1)
+        upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else 1
         for i in range(1, count + 1):
             lines.append(f"  {svc_name}_{i}:")
             lines.append(f"    build:")

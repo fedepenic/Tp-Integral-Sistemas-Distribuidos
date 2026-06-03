@@ -3,7 +3,10 @@ import shutil
 import subprocess
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-n_clients = int(os.environ.get('N_CLIENTS', 5))
+
+# Use N_WORKERS override if set, otherwise use N_CLIENTS
+n_workers = int(os.environ.get('N_WORKERS', 0))
+n_clients = n_workers if n_workers > 0 else int(os.environ.get('N_CLIENTS', 5))
 
 notebook_output_root = os.path.join(base_dir, "output", "notebook")
 if os.path.exists(notebook_output_root):
