@@ -1,4 +1,8 @@
-"""Generate system/docker-compose.yml based on instance counts from .env."""
+"""Generate system/docker-compose.yml based on instance counts from .env.
+
+Set TEST_QUERIES=1,3 (comma-separated) to include only the nodes required
+for those queries. Omit it to include every query (default).
+"""
 
 import os
 from pathlib import Path
@@ -91,7 +95,6 @@ SERVICES = [
     ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
         "INPUT_QUEUE":              "raw_transactions",
         "OUTPUT_EXCHANGE":          "transactions_clean",
-        "OUTPUT_KEYS":              "txn_for_usd,txn_for_q5",
         "RABBITMQ_HOST":            "rabbitmq",
         "RABBITMQ_PORT":            "5672",
         "EOF_EXCHANGE":             "cleaner_eof",
@@ -204,6 +207,72 @@ JOINERS = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Query membership: which queries each service is required for.
+# Services absent from these dicts are always included (cleaner, gateway, etc.)
+# ---------------------------------------------------------------------------
+
+ALL_QUERIES = {"1", "2", "3", "4", "5"}
+
+NAMED_FILTER_QUERIES: dict[str, set[str]] = {
+    "usd_filter":         {"1", "2", "3", "4"},
+    "amt50_filter":       {"1"},
+    "period2_filter":     {"3"},
+    "period1_filter":     {"3", "4"},
+    "amt_avg_filter":     {"3"},
+    "period1_q5_filter":  {"5"},
+    "wireach_filter":     {"5"},
+    "usd_lower_than_one": {"5"},
+}
+
+AGGREGATOR_QUERIES: dict[str, set[str]] = {
+    "max_per_bank":           {"2"},
+    "avg_per_payment_format": {"3"},
+    "fan_in":                 {"4"},
+    "fan_out":                {"4"},
+    "scatter_gather":         {"4"},
+}
+
+JOINER_QUERIES: dict[str, set[str]] = {
+    "join_q2":   {"2"},
+    "join_q3":   {"3"},
+    "joiner_sg": {"4"},
+}
+
+SERVICE_QUERIES: dict[str, set[str]] = {
+    # cleaner is always included — its OUTPUT_KEYS are computed dynamically
+    "currency_converter": {"5"},
+}
+
+COUNTER_QUERIES: dict[str, set[str]] = {
+    "counter_q5": {"5"},
+}
+
+SINK_QUERIES: dict[str, set[str]] = {
+    "1": {"1"},
+    "2": {"2"},
+    "3": {"3"},
+    "4": {"4"},
+    "5": {"5"},
+}
+
+
+def get_active_queries(env: dict[str, str]) -> set[str]:
+    """Return the set of query IDs to include. Defaults to all queries."""
+    raw = env.get("TEST_QUERIES", "").strip()
+    if not raw:
+        return ALL_QUERIES
+    return {q.strip() for q in raw.split(",") if q.strip()}
+
+
+def cleaner_output_keys(active_queries: set[str]) -> str:
+    keys = []
+    if active_queries & {"1", "2", "3", "4"}:
+        keys.append("txn_for_usd")
+    if "5" in active_queries:
+        keys.append("txn_for_q5")
+    return ",".join(keys)
+
 
 def get_instance_count(env: dict[str, str], env_var: str, default: int = 1) -> int:
     """Get instance count from env, respecting N_WORKERS global override.
@@ -235,9 +304,10 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     return {}
 
 
-def services_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
+def services_extra_env(name: str, env: dict[str, str], active_queries: set[str]) -> dict[str, str]:
     if name == "cleaner":
         return {
+            "OUTPUT_KEYS":              cleaner_output_keys(active_queries),
             "ACCOUNTS_JOIN_PARTITIONS": env.get("N_JOIN_Q2", "1"),
         }
     return {}
@@ -286,7 +356,12 @@ def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
     return {}
 
 
-def build_compose(env: dict[str, str]) -> str:
+def active_for(name: str, membership: dict[str, set[str]], active_queries: set[str]) -> bool:
+    """Return True if the service should be included given the active query set."""
+    return bool(membership.get(name, ALL_QUERIES) & active_queries)
+
+
+def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines = ["services:"]
 
     # RabbitMQ — single instance, must be healthy before gateway starts
@@ -355,6 +430,8 @@ def build_compose(env: dict[str, str]) -> str:
         name, dockerfile, env_var = entry[0], entry[1], entry[2]
         upstream_env_var = entry[3] if len(entry) > 4 else None
         extra_env = entry[4] if len(entry) > 4 else entry[3]
+        if not active_for(name, SERVICE_QUERIES, active_queries):
+            continue
         count = get_instance_count(env, env_var, 1)
         upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else None
         for i in range(1, count + 1):
@@ -368,7 +445,7 @@ def build_compose(env: dict[str, str]) -> str:
             if upstream is not None:
                 lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
             env_map = dict(extra_env)
-            env_map.update(services_extra_env(name, env))
+            env_map.update(services_extra_env(name, env, active_queries))
             for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
             lines.append(f"    depends_on:")
@@ -378,6 +455,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Aggregators
     for name, dockerfile, count_env_var, upstream_env_var, extra_env in AGGREGATORS:
+        if not active_for(name, AGGREGATOR_QUERIES, active_queries):
+            continue
         count = get_instance_count(env, count_env_var, 1)
         upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else 1
         env_map = dict(extra_env)
@@ -407,6 +486,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Joiners
     for name, dockerfile, count_env_var, extra_env in JOINERS:
+        if not active_for(name, JOINER_QUERIES, active_queries):
+            continue
         count = get_instance_count(env, count_env_var, 1)
         env_map = dict(extra_env)
         env_map.update(joiners_extra_env(name, env))
@@ -440,6 +521,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Counters — single instance, aggregate transactions into a count before the sink
     for svc_name, input_queue, output_queue, upstream_env_var in COUNTERS:
+        if not active_for(svc_name, COUNTER_QUERIES, active_queries):
+            continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  {svc_name}:")
         lines.append(f"    build:")
@@ -458,6 +541,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Sinks — always single-instance, one per query
     for query_id, input_queue, upstream_env_var in SINKS:
+        if not active_for(query_id, SINK_QUERIES, active_queries):
+            continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
@@ -477,6 +562,8 @@ def build_compose(env: dict[str, str]) -> str:
 
     # Named filters — instance count driven by .env, with specific build args and env vars
     for svc_name, filter_name, count_env_var, upstream_env_var, extra_env in NAMED_FILTERS:
+        if not active_for(svc_name, NAMED_FILTER_QUERIES, active_queries):
+            continue
         count = get_instance_count(env, count_env_var, 1)
         upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else 1
         for i in range(1, count + 1):
@@ -506,7 +593,10 @@ def build_compose(env: dict[str, str]) -> str:
 
 def main():
     env = os.environ
-    compose = build_compose(env)
+    active_queries = get_active_queries(env)
+    if active_queries != ALL_QUERIES:
+        print(f"TEST_QUERIES={','.join(sorted(active_queries))} — including only queries: {sorted(active_queries)}")
+    compose = build_compose(env, active_queries)
     COMPOSE_OUT.write_text(compose)
     print(f"Written {COMPOSE_OUT}")
 
