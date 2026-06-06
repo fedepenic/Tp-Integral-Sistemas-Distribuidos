@@ -17,12 +17,14 @@ func newProcess() node.ProcessFunc {
 		for _, t := range batch.Transactions {
 			seen++
 			in := filterInput{
-				PaymentFormat: t.PaymentFormat,
-				FromBank:      t.FromBank,
-				FromAccount:   t.FromAccount,
-				ToBank:        t.ToBank,
-				ToAccount:     t.ToAccount,
-				AmountPaid:    t.AmountPaid,
+				Timestamp:       t.Timestamp,
+				PaymentFormat:   t.PaymentFormat,
+				PaymentCurrency: t.PaymentCurrency,
+				FromBank:        t.FromBank,
+				FromAccount:     t.FromAccount,
+				ToBank:          t.ToBank,
+				ToAccount:       t.ToAccount,
+				AmountPaid:      t.AmountPaid,
 			}
 			ok := in.PaymentFormat == formatWire || in.PaymentFormat == formatACH
 			if seen <= 5 {
@@ -34,11 +36,13 @@ func newProcess() node.ProcessFunc {
 					log.Printf("[wireach_filter] passed=%d seen=%d", passed, seen)
 				}
 				out = append(out, protocol.Transaction{
-					FromBank:    in.FromBank,
-					FromAccount: in.FromAccount,
-					ToBank:      in.ToBank,
-					ToAccount:   in.ToAccount,
-					AmountPaid:  in.AmountPaid,
+					Timestamp:       in.Timestamp,
+					PaymentCurrency: in.PaymentCurrency,
+					FromBank:        in.FromBank,
+					FromAccount:     in.FromAccount,
+					ToBank:          in.ToBank,
+					ToAccount:       in.ToAccount,
+					AmountPaid:      in.AmountPaid,
 				})
 			}
 		}
