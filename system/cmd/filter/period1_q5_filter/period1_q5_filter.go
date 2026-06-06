@@ -27,6 +27,11 @@ func newProcess() node.ProcessFunc {
 				Timestamp:       t.Timestamp,
 				AmountPaid:      t.AmountPaid,
 				PaymentCurrency: t.PaymentCurrency,
+				PaymentFormat:   t.PaymentFormat,
+				FromBank:        t.FromBank,
+				FromAccount:     t.FromAccount,
+				ToBank:          t.ToBank,
+				ToAccount:       t.ToAccount,
 			}
 			date := strings.ReplaceAll(in.Timestamp[:10], "/", "-")
 			ts, err := time.Parse(dateLayout, date)
@@ -47,6 +52,11 @@ func newProcess() node.ProcessFunc {
 					Timestamp:       in.Timestamp,
 					AmountPaid:      in.AmountPaid,
 					PaymentCurrency: in.PaymentCurrency,
+					PaymentFormat:   in.PaymentFormat,
+					FromBank:        in.FromBank,
+					FromAccount:     in.FromAccount,
+					ToBank:          in.ToBank,
+					ToAccount:       in.ToAccount,
 				})
 			} else if seen <= 5 {
 				log.Printf("[period1_q5_filter] skip txn=%d date=%s (out of window)", seen, date)

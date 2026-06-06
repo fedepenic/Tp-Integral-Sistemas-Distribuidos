@@ -22,8 +22,12 @@ func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int
 			if t.PaymentCurrency == targetCurrency {
 				out = append(out, filterInput{
 					PaymentCurrency: t.PaymentCurrency,
+					Timestamp:       t.Timestamp,
+					PaymentFormat:   t.PaymentFormat,
 					FromBank:        t.FromBank,
 					FromAccount:     t.FromAccount,
+					ToBank:          t.ToBank,
+					ToAccount:       t.ToAccount,
 					AmountPaid:      t.AmountPaid,
 				})
 			}
@@ -35,9 +39,13 @@ func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int
 		fanout := make([]protocol.Transaction, 0, len(out))
 		for _, in := range out {
 			fanout = append(fanout, protocol.Transaction{
-				FromBank:    in.FromBank,
-				FromAccount: in.FromAccount,
-				AmountPaid:  in.AmountPaid,
+				Timestamp:     in.Timestamp,
+				PaymentFormat: in.PaymentFormat,
+				FromBank:      in.FromBank,
+				FromAccount:   in.FromAccount,
+				ToBank:        in.ToBank,
+				ToAccount:     in.ToAccount,
+				AmountPaid:    in.AmountPaid,
 			})
 		}
 		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: fanout}, true
