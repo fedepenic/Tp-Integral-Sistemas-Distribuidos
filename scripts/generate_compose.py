@@ -92,7 +92,7 @@ NAMED_FILTERS = [
 ]
 
 SERVICES = [
-    ("cleaner", "cmd/cleaner/Dockerfile", "N_CLEANERS", {
+    ("cleaner", "cleaner", "N_CLEANERS", {
         "INPUT_QUEUE":              "raw_transactions",
         "OUTPUT_EXCHANGE":          "transactions_clean",
         "RABBITMQ_HOST":            "rabbitmq",
@@ -102,7 +102,7 @@ SERVICES = [
         "ACCOUNTS_JOIN_KEY_PREFIX": "joinq2",
     }),
     # UPSTREAM_INSTANCES = N_WIREACH_FILTER: each wireach_filter instance sends its own EOF.
-    ("currency_converter", "cmd/currency_converter/Dockerfile", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {
+    ("currency_converter", "currency_converter", "N_CURRENCY_CONVERTERS", "N_WIREACH_FILTER", {
         "INPUT_QUEUE":  "wireach_txn",
         "OUTPUT_QUEUE": "converted_usd",
         "RABBITMQ_HOST": "rabbitmq",
@@ -110,11 +110,11 @@ SERVICES = [
     }),
 ]
 
-# (service_name, dockerfile, instance_count_env_var, upstream_count_env_var, extra_env)
+# (service_name, service_path, instance_count_env_var, upstream_count_env_var, extra_env)
 AGGREGATORS = [
     (
         "max_per_bank",
-        "cmd/aggregators/max_per_bank/Dockerfile",
+        "aggregators/max_per_bank",
         "N_MAXBANK",
         "N_USD_FILTER",
         {
@@ -125,7 +125,7 @@ AGGREGATORS = [
     ),
     (
         "avg_per_payment_format",
-        "cmd/aggregators/avg_per_payment_format/Dockerfile",
+        "aggregators/avg_per_payment_format",
         "N_AVG_PER_PAY",
         "N_PERIOD1_FILTER",
         {
@@ -136,7 +136,7 @@ AGGREGATORS = [
     ),
     (
         "fan_in",
-        "cmd/aggregators/fan_in/Dockerfile",
+        "aggregators/fan_in",
         "N_FI",
         "N_PERIOD1_FILTER",
         {
@@ -147,7 +147,7 @@ AGGREGATORS = [
     ),
     (
         "fan_out",
-        "cmd/aggregators/fan_out/Dockerfile",
+        "aggregators/fan_out",
         "N_FO",
         "N_PERIOD1_FILTER",
         {
@@ -158,7 +158,7 @@ AGGREGATORS = [
     ),
     (
         "scatter_gather",
-        "cmd/aggregators/scatter_gather/Dockerfile",
+        "aggregators/scatter_gather",
         "N_SG",
         "N_JOINER_SG",
         {
@@ -172,7 +172,7 @@ AGGREGATORS = [
 JOINERS = [
     (
         "join_q2",
-        "cmd/joiners/join_q2/Dockerfile",
+        "joiners/join_q2",
         "N_JOIN_Q2",
         {
             "INPUT_EXCHANGE":   "join_q2_input",
@@ -182,7 +182,7 @@ JOINERS = [
     ),
     (
         "join_q3",
-        "cmd/joiners/join_q3/Dockerfile",
+        "joiners/join_q3",
         "N_JOIN_Q3",
         {
             "INPUT_QUEUE_NAME_PREFIX": "join_q3_input",
@@ -194,7 +194,7 @@ JOINERS = [
     ),
     (
         "joiner_sg",
-        "cmd/joiners/joiner_sg/Dockerfile",
+        "joiners/joiner_sg",
         "N_JOINER_SG",
         {
             "INPUT_QUEUE_NAME_PREFIX": "joiner_sg_input",
@@ -386,7 +386,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append(f"  gateway:")
     lines.append(f"    build:")
     lines.append(f"      context: .")
-    lines.append(f"      dockerfile: cmd/gateway/Dockerfile")
+    lines.append(f"      dockerfile: cmd/Dockerfile")
+    lines.append(f"      args:")
+    lines.append(f"        SERVICE_PATH: gateway")
     lines.append(f"    environment:")
     lines.append(f"      - GATEWAY_PORT={GATEWAY_PORT}")
     lines.append(f"      - RABBITMQ_HOST=rabbitmq")
@@ -410,7 +412,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"  client_{i}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
-        lines.append(f"      dockerfile: cmd/client/Dockerfile")
+        lines.append(f"      dockerfile: cmd/Dockerfile")
+        lines.append(f"      args:")
+        lines.append(f"        SERVICE_PATH: client")
         lines.append(f"    environment:")
         lines.append(f"      - INSTANCE_ID={i}")
         lines.append(f"      - INSTANCE_TOTAL={n_clients}")
@@ -427,7 +431,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append("")
 
     for entry in SERVICES:
-        name, dockerfile, env_var = entry[0], entry[1], entry[2]
+        name, service_path, env_var = entry[0], entry[1], entry[2]
         upstream_env_var = entry[3] if len(entry) > 4 else None
         extra_env = entry[4] if len(entry) > 4 else entry[3]
         if not active_for(name, SERVICE_QUERIES, active_queries):
@@ -438,7 +442,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
             lines.append(f"      context: .")
-            lines.append(f"      dockerfile: {dockerfile}")
+            lines.append(f"      dockerfile: cmd/Dockerfile")
+            lines.append(f"      args:")
+            lines.append(f"        SERVICE_PATH: {service_path}")
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
@@ -454,7 +460,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append("")
 
     # Aggregators
-    for name, dockerfile, count_env_var, upstream_env_var, extra_env in AGGREGATORS:
+    for name, service_path, count_env_var, upstream_env_var, extra_env in AGGREGATORS:
         if not active_for(name, AGGREGATOR_QUERIES, active_queries):
             continue
         count = get_instance_count(env, count_env_var, 1)
@@ -466,7 +472,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
             lines.append(f"      context: .")
-            lines.append(f"      dockerfile: {dockerfile}")
+            lines.append(f"      dockerfile: cmd/Dockerfile")
+            lines.append(f"      args:")
+            lines.append(f"        SERVICE_PATH: {service_path}")
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
@@ -485,7 +493,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append("")
 
     # Joiners
-    for name, dockerfile, count_env_var, extra_env in JOINERS:
+    for name, service_path, count_env_var, extra_env in JOINERS:
         if not active_for(name, JOINER_QUERIES, active_queries):
             continue
         count = get_instance_count(env, count_env_var, 1)
@@ -498,7 +506,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append(f"  {name}_{i}:")
             lines.append(f"    build:")
             lines.append(f"      context: .")
-            lines.append(f"      dockerfile: {dockerfile}")
+            lines.append(f"      dockerfile: cmd/Dockerfile")
+            lines.append(f"      args:")
+            lines.append(f"        SERVICE_PATH: {service_path}")
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")
@@ -527,7 +537,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"  {svc_name}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
-        lines.append(f"      dockerfile: cmd/counter/Dockerfile")
+        lines.append(f"      dockerfile: cmd/Dockerfile")
+        lines.append(f"      args:")
+        lines.append(f"        SERVICE_PATH: counter")
         lines.append(f"    environment:")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
         lines.append(f"      - OUTPUT_QUEUE={output_queue}")
@@ -547,7 +559,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    build:")
         lines.append(f"      context: .")
-        lines.append(f"      dockerfile: cmd/sink/Dockerfile")
+        lines.append(f"      dockerfile: cmd/Dockerfile")
+        lines.append(f"      args:")
+        lines.append(f"        SERVICE_PATH: sink")
         lines.append(f"    environment:")
         lines.append(f"      - QUERY_ID={query_id}")
         lines.append(f"      - INPUT_QUEUE={input_queue}")
@@ -570,9 +584,9 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             lines.append(f"  {svc_name}_{i}:")
             lines.append(f"    build:")
             lines.append(f"      context: .")
-            lines.append(f"      dockerfile: cmd/filter/Dockerfile")
+            lines.append(f"      dockerfile: cmd/Dockerfile")
             lines.append(f"      args:")
-            lines.append(f"        FILTER_NAME: {filter_name}")
+            lines.append(f"        SERVICE_PATH: filter/{filter_name}")
             lines.append(f"    environment:")
             lines.append(f"      - INSTANCE_ID={i}")
             lines.append(f"      - INSTANCE_TOTAL={count}")

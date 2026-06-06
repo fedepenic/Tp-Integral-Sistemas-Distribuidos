@@ -18,7 +18,9 @@ services:
   gateway:
     build:
       context: .
-      dockerfile: cmd/gateway/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: gateway
     environment:
       - GATEWAY_PORT=8080
       - RABBITMQ_HOST=rabbitmq
@@ -35,7 +37,9 @@ services:
   client_1:
     build:
       context: .
-      dockerfile: cmd/client/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: client
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=3
@@ -53,7 +57,9 @@ services:
   client_2:
     build:
       context: .
-      dockerfile: cmd/client/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: client
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=3
@@ -71,7 +77,9 @@ services:
   client_3:
     build:
       context: .
-      dockerfile: cmd/client/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: client
     environment:
       - INSTANCE_ID=3
       - INSTANCE_TOTAL=3
@@ -89,7 +97,9 @@ services:
   cleaner_1:
     build:
       context: .
-      dockerfile: cmd/cleaner/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: cleaner
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=3
@@ -109,7 +119,9 @@ services:
   cleaner_2:
     build:
       context: .
-      dockerfile: cmd/cleaner/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: cleaner
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=3
@@ -129,7 +141,9 @@ services:
   cleaner_3:
     build:
       context: .
-      dockerfile: cmd/cleaner/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: cleaner
     environment:
       - INSTANCE_ID=3
       - INSTANCE_TOTAL=3
@@ -149,7 +163,9 @@ services:
   currency_converter_1:
     build:
       context: .
-      dockerfile: cmd/currency_converter/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: currency_converter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=3
@@ -165,7 +181,9 @@ services:
   currency_converter_2:
     build:
       context: .
-      dockerfile: cmd/currency_converter/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: currency_converter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=3
@@ -181,7 +199,9 @@ services:
   currency_converter_3:
     build:
       context: .
-      dockerfile: cmd/currency_converter/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: currency_converter
     environment:
       - INSTANCE_ID=3
       - INSTANCE_TOTAL=3
@@ -197,7 +217,9 @@ services:
   max_per_bank_1:
     build:
       context: .
-      dockerfile: cmd/aggregators/max_per_bank/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/max_per_bank
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -216,7 +238,9 @@ services:
   max_per_bank_2:
     build:
       context: .
-      dockerfile: cmd/aggregators/max_per_bank/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/max_per_bank
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -235,7 +259,9 @@ services:
   join_q2_1:
     build:
       context: .
-      dockerfile: cmd/joiners/join_q2/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: joiners/join_q2
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -253,7 +279,9 @@ services:
   join_q2_2:
     build:
       context: .
-      dockerfile: cmd/joiners/join_q2/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: joiners/join_q2
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -271,7 +299,9 @@ services:
   counter_q5:
     build:
       context: .
-      dockerfile: cmd/counter/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: counter
     environment:
       - INPUT_QUEUE=q5_filtered
       - OUTPUT_QUEUE=q5_count
@@ -285,7 +315,9 @@ services:
   sink_1:
     build:
       context: .
-      dockerfile: cmd/sink/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: sink
     environment:
       - QUERY_ID=1
       - INPUT_QUEUE=q1_data
@@ -300,7 +332,9 @@ services:
   sink_2:
     build:
       context: .
-      dockerfile: cmd/sink/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: sink
     environment:
       - QUERY_ID=2
       - INPUT_QUEUE=q2_data
@@ -315,7 +349,9 @@ services:
   sink_5:
     build:
       context: .
-      dockerfile: cmd/sink/Dockerfile
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: sink
     environment:
       - QUERY_ID=5
       - INPUT_QUEUE=q5_count
@@ -330,9 +366,9 @@ services:
   usd_filter_1:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: usd_filter
+        SERVICE_PATH: filter/usd_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -354,9 +390,9 @@ services:
   usd_filter_2:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: usd_filter
+        SERVICE_PATH: filter/usd_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -378,9 +414,9 @@ services:
   amt50_filter_1:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: lower_than_50_filter
+        SERVICE_PATH: filter/lower_than_50_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -398,9 +434,9 @@ services:
   amt50_filter_2:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: lower_than_50_filter
+        SERVICE_PATH: filter/lower_than_50_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -418,9 +454,9 @@ services:
   period1_q5_filter_1:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: period1_q5_filter
+        SERVICE_PATH: filter/period1_q5_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -439,9 +475,9 @@ services:
   period1_q5_filter_2:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: period1_q5_filter
+        SERVICE_PATH: filter/period1_q5_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -460,9 +496,9 @@ services:
   wireach_filter_1:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: wire_ach_filter
+        SERVICE_PATH: filter/wire_ach_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -479,9 +515,9 @@ services:
   wireach_filter_2:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: wire_ach_filter
+        SERVICE_PATH: filter/wire_ach_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
@@ -498,9 +534,9 @@ services:
   usd_lower_than_one_1:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: lower_than_1_filter
+        SERVICE_PATH: filter/lower_than_1_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
@@ -517,9 +553,9 @@ services:
   usd_lower_than_one_2:
     build:
       context: .
-      dockerfile: cmd/filter/Dockerfile
+      dockerfile: cmd/Dockerfile
       args:
-        FILTER_NAME: lower_than_1_filter
+        SERVICE_PATH: filter/lower_than_1_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
