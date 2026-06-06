@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	svc := node.New("max_per_bank")
+	svc := node.NewExclusive("max_per_bank")
 	conn := svc.Conn()
 
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)

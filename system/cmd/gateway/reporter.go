@@ -49,12 +49,25 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	}
 
 	path := filepath.Join(dir, "query_"+queryID+".csv")
-	f, err := os.Create(path)
+
+	// If the file already exists a previous EOF closed it and late-arriving
+	// batches are about to be appended. Open in append mode so we don't
+	// truncate the data that was already written.
+	_, statErr := os.Stat(path)
+	alreadyExists := statErr == nil
+
+	var f *os.File
+	var err error
+	if alreadyExists {
+		f, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.Create(path)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("create output file %s: %w", path, err)
+		return nil, fmt.Errorf("open output file %s: %w", path, err)
 	}
 
-	w := &queryWriter{file: f, csv: csv.NewWriter(f)}
+	w := &queryWriter{file: f, csv: csv.NewWriter(f), headerWritten: alreadyExists}
 	r.writers[key] = w
 	return w, nil
 }

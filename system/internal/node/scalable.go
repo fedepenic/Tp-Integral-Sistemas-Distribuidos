@@ -42,12 +42,19 @@ type Scalable struct {
 	instanceTotal int
 
 	// in-flight tracking — guarded by mu
-	mu            sync.Mutex
-	cond          *sync.Cond
-	globalPending int
-	clientPending map[string]int
+	mu             sync.Mutex
+	cond           *sync.Cond
+	globalPending  int
+	clientPending  map[string]int
+	eofInFlight    map[string]bool // true while handleEOF is sending the downstream EOF
 
-	// single-sided EOF counting (New)
+	// selfOnly suppresses peer-broadcast: the EOF exchange only routes back to
+	// this instance. Use this for nodes with exclusive per-instance input queues
+	// (e.g. max_per_bank) where each instance independently receives all upstream
+	// EOFs and peer coordination would multiply the count.
+	selfOnly bool
+
+	// single-sided EOF counting (New / NewExclusive)
 	eofCount map[string]int
 
 	// two-sided EOF counting (NewJoin)
@@ -68,6 +75,26 @@ func New(name string) *Scalable {
 		instanceTotal: mustInt("INSTANCE_TOTAL"),
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
+		eofInFlight:   make(map[string]bool),
+	}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+// NewExclusive creates a Scalable whose EOF broadcast routes only to itself
+// (no peer coordination). Use this when every instance has its own exclusive
+// input queue and independently receives all upstream EOFs — peer broadcasting
+// would otherwise multiply the count by INSTANCE_TOTAL.
+func NewExclusive(name string) *Scalable {
+	s := &Scalable{
+		Node:          newNode(),
+		name:          name,
+		instanceID:    mustInt("INSTANCE_ID"),
+		instanceTotal: mustInt("INSTANCE_TOTAL"),
+		selfOnly:      true,
+		clientPending: make(map[string]int),
+		eofCount:      make(map[string]int),
+		eofInFlight:   make(map[string]bool),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -87,6 +114,7 @@ func NewJoin(name string, leftUpstream, rightUpstream int, classify func(protoco
 		instanceTotal: mustInt("INSTANCE_TOTAL"),
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
+		eofInFlight:   make(map[string]bool),
 		leftUpstream:  leftUpstream,
 		rightUpstream: rightUpstream,
 		eofLeftCount:  make(map[string]int),
@@ -104,9 +132,9 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 	ownKey := fmt.Sprintf("%s_%d", s.name, s.instanceID)
 	eofExchange := config.EnvOrDefault("EOF_EXCHANGE", s.name+"_eof")
 
-	// In join mode each instance only routes EOFs to itself — no peer broadcast.
+	// Join mode and exclusive mode both route EOFs to this instance only.
 	var broadcastKeys []string
-	if s.leftUpstream > 0 {
+	if s.leftUpstream > 0 || s.selfOnly {
 		broadcastKeys = []string{ownKey}
 	} else {
 		broadcastKeys = make([]string, s.instanceTotal)
@@ -189,6 +217,12 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		}
 
 		s.mu.Lock()
+		// Wait if handleEOF is currently sending the downstream EOF for this
+		// client. This closes the TOCTOU window where a late data batch would
+		// otherwise reach outputMW after the EOF.
+		for s.eofInFlight[batch.ClientID] {
+			s.cond.Wait()
+		}
 		s.globalPending--
 		s.clientPending[batch.ClientID]++
 		s.mu.Unlock()
@@ -274,6 +308,9 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		for s.globalPending > 0 || s.clientPending[clientID] > 0 {
 			s.cond.Wait()
 		}
+		// Mark this client's EOF as in-flight so that handleData blocks any
+		// new batches for this client until the downstream EOF is sent.
+		s.eofInFlight[clientID] = true
 		s.mu.Unlock()
 
 		// Give stateful nodes a chance to flush accumulated results before the
@@ -286,17 +323,29 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		if result, ok := fn(batch); ok {
 			if result.Type == protocol.BatchTypeEOF {
 				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, clientID)
+				s.mu.Lock()
+				delete(s.eofInFlight, clientID)
+				s.cond.Broadcast()
+				s.mu.Unlock()
 				ack()
 				return
 			}
 			data, err := json.Marshal(result)
 			if err != nil {
 				log.Printf("[%s] marshal flush result client=%s: %v", s.name, clientID, err)
+				s.mu.Lock()
+				delete(s.eofInFlight, clientID)
+				s.cond.Broadcast()
+				s.mu.Unlock()
 				nack()
 				return
 			}
 			if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
 				log.Printf("[%s] send flush result client=%s: %v", s.name, clientID, err)
+				s.mu.Lock()
+				delete(s.eofInFlight, clientID)
+				s.cond.Broadcast()
+				s.mu.Unlock()
 				nack()
 				return
 			}
@@ -304,18 +353,26 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 
 		if err := outputMW.Send(msg); err != nil {
 			log.Printf("[%s] send EOF client=%s: %v", s.name, clientID, err)
+			s.mu.Lock()
+			delete(s.eofInFlight, clientID)
+			s.cond.Broadcast()
+			s.mu.Unlock()
 			nack()
 			return
 		}
 		log.Printf("[%s] EOF forwarded client=%s", s.name, clientID)
 
+		s.mu.Lock()
 		if s.leftUpstream > 0 {
-			s.mu.Lock()
 			delete(s.eofLeftCount, clientID)
 			delete(s.eofRightCount, clientID)
-			delete(s.clientPending, clientID)
-			s.mu.Unlock()
+		} else {
+			delete(s.eofCount, clientID)
 		}
+		delete(s.clientPending, clientID)
+		delete(s.eofInFlight, clientID)
+		s.cond.Broadcast()
+		s.mu.Unlock()
 
 		ack()
 	}
