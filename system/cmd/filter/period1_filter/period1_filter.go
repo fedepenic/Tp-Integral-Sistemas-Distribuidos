@@ -12,21 +12,19 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
-const dateLayout = "2006-01-02"
-
 func newProcess(
 	outQ3MW, outFOMW, outFIMW middleware.Middleware,
 	q3KeyPrefix string, q3Partitions int,
 	foKeyPrefix string, foPartitions int,
 	fiKeyPrefix string, fiPartitions int,
 ) node.ProcessFunc {
-	start, _ := time.Parse(dateLayout, "2022-09-01")
-	end, _ := time.Parse(dateLayout, "2022-09-05")
+	start, _ := time.Parse(dateLayout, periodStart)
+	end, _ := time.Parse(dateLayout, periodEnd)
 	end = end.Add(24 * time.Hour)
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
-			sendQ3EOF(outQ3MW, batch, q3KeyPrefix, q3Partitions)
+			sendPartitionedEOF(outQ3MW, batch, q3KeyPrefix, q3Partitions)
 			sendPartitionedEOF(outFOMW, batch, foKeyPrefix, foPartitions)
 			sendPartitionedEOF(outFIMW, batch, fiKeyPrefix, fiPartitions)
 			return batch, true
@@ -34,46 +32,59 @@ func newProcess(
 		if batch.Type != protocol.BatchTypeTransactions {
 			return protocol.Batch{}, false
 		}
-		out := make([]protocol.Transaction, 0, len(batch.Transactions))
+		out := make([]filterInput, 0, len(batch.Transactions))
 		for _, t := range batch.Transactions {
 			date := strings.ReplaceAll(t.Timestamp[:10], "/", "-")
 			ts, err := time.Parse(dateLayout, date)
 			if err != nil || ts.Before(start) || !ts.Before(end) {
 				continue
 			}
-			out = append(out, t)
+			out = append(out, filterInput{
+				Timestamp:     t.Timestamp,
+				PaymentFormat: t.PaymentFormat,
+				AmountPaid:    t.AmountPaid,
+				FromBank:      t.FromBank,
+				FromAccount:   t.FromAccount,
+				ToBank:        t.ToBank,
+				ToAccount:     t.ToAccount,
+			})
 		}
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
 		sendQ3Partitioned(outQ3MW, batch.ClientID, out, q3KeyPrefix, q3Partitions)
 		sendQ4Partitioned(outFOMW, batch.ClientID, out, foKeyPrefix, foPartitions,
-			func(t protocol.Transaction) string { return t.FromBank + "|" + t.FromAccount })
+			func(in filterInput) string { return in.FromBank + "|" + in.FromAccount })
 		sendQ4Partitioned(outFIMW, batch.ClientID, out, fiKeyPrefix, fiPartitions,
-			func(t protocol.Transaction) string { return t.ToBank + "|" + t.ToAccount })
+			func(in filterInput) string { return in.ToBank + "|" + in.ToAccount })
 		return protocol.Batch{}, false
 	}
 }
 
-// sendQ3Partitioned routes transactions to avg_per_payment_format instances by
-// hashing each transaction's PaymentFormat to a partition key.
-func sendQ3Partitioned(mw middleware.Middleware, clientID string, txns []protocol.Transaction, keyPrefix string, partitions int) {
+func sendQ3Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int) {
 	grouped := make(map[int][]protocol.Transaction)
-	for _, t := range txns {
-		p := worker.PartitionForKey(t.PaymentFormat, partitions)
-		grouped[p] = append(grouped[p], t)
+	for _, in := range inputs {
+		p := worker.PartitionForKey(in.PaymentFormat, partitions)
+		grouped[p] = append(grouped[p], protocol.Transaction{
+			PaymentFormat: in.PaymentFormat,
+			AmountPaid:    in.AmountPaid,
+		})
 	}
 	for p, group := range grouped {
 		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p))
 	}
 }
 
-// sendQ4Partitioned routes transactions by hashing the result of keyFn (an account key).
-func sendQ4Partitioned(mw middleware.Middleware, clientID string, txns []protocol.Transaction, keyPrefix string, partitions int, keyFn func(protocol.Transaction) string) {
+func sendQ4Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, keyFn func(filterInput) string) {
 	grouped := make(map[int][]protocol.Transaction)
-	for _, t := range txns {
-		p := worker.PartitionForKey(keyFn(t), partitions)
-		grouped[p] = append(grouped[p], t)
+	for _, in := range inputs {
+		p := worker.PartitionForKey(keyFn(in), partitions)
+		grouped[p] = append(grouped[p], protocol.Transaction{
+			FromBank:    in.FromBank,
+			FromAccount: in.FromAccount,
+			ToBank:      in.ToBank,
+			ToAccount:   in.ToAccount,
+		})
 	}
 	for p, group := range grouped {
 		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p))
@@ -92,11 +103,6 @@ func sendTxnBatch(mw middleware.Middleware, clientID string, txns []protocol.Tra
 	}
 }
 
-// sendQ3EOF fans the EOF out to every avg_per_payment_format partition.
-func sendQ3EOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int) {
-	sendPartitionedEOF(mw, batch, keyPrefix, partitions)
-}
-
 func sendPartitionedEOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int) {
 	data, err := json.Marshal(batch)
 	if err != nil {
@@ -108,16 +114,5 @@ func sendPartitionedEOF(mw middleware.Middleware, batch protocol.Batch, keyPrefi
 		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
 			log.Printf("[period1_filter] send EOF partition=%d: %v", p, err)
 		}
-	}
-}
-
-func sendGroupedByKey(mw middleware.Middleware, clientID string, txns []protocol.Transaction, keyFn func(protocol.Transaction) string) {
-	groups := make(map[string][]protocol.Transaction)
-	for _, t := range txns {
-		k := keyFn(t)
-		groups[k] = append(groups[k], t)
-	}
-	for k, group := range groups {
-		sendTxnBatch(mw, clientID, group, k)
 	}
 }

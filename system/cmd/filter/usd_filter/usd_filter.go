@@ -17,27 +17,42 @@ func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int
 			return protocol.Batch{}, false
 		}
 
-		out := make([]protocol.Transaction, 0, len(batch.Transactions))
+		out := make([]filterInput, 0, len(batch.Transactions))
 		for _, t := range batch.Transactions {
-			if t.PaymentCurrency == "US Dollar" {
-				out = append(out, t)
+			if t.PaymentCurrency == targetCurrency {
+				out = append(out, filterInput{
+					PaymentCurrency: t.PaymentCurrency,
+					FromBank:        t.FromBank,
+					FromAccount:     t.FromAccount,
+					AmountPaid:      t.AmountPaid,
+				})
 			}
 		}
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
 		sendToQ2(directMW, batch.ClientID, out, keyPrefix, partitions)
-		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: out}, true
+		fanout := make([]protocol.Transaction, 0, len(out))
+		for _, in := range out {
+			fanout = append(fanout, protocol.Transaction{
+				FromBank:    in.FromBank,
+				FromAccount: in.FromAccount,
+				AmountPaid:  in.AmountPaid,
+			})
+		}
+		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: fanout}, true
 	}
 }
 
-// sendToQ2 groups transactions by hash(FromBank) and routes each group to the
-// correct max_per_bank instance via a per-partition routing key.
-func sendToQ2(mw middleware.Middleware, clientID string, txns []protocol.Transaction, keyPrefix string, partitions int) {
+func sendToQ2(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int) {
 	grouped := make(map[int][]protocol.Transaction)
-	for _, t := range txns {
-		p := worker.PartitionForKey(t.FromBank, partitions)
-		grouped[p] = append(grouped[p], t)
+	for _, in := range inputs {
+		p := worker.PartitionForKey(in.FromBank, partitions)
+		grouped[p] = append(grouped[p], protocol.Transaction{
+			FromBank:    in.FromBank,
+			FromAccount: in.FromAccount,
+			AmountPaid:  in.AmountPaid,
+		})
 	}
 	for p, group := range grouped {
 		key := worker.RoutingKey(keyPrefix, p)
@@ -57,8 +72,6 @@ func sendToQ2(mw middleware.Middleware, clientID string, txns []protocol.Transac
 	}
 }
 
-// sendQ2EOF fans the EOF out to every max_per_bank partition so each instance
-// knows the upstream is done.
 func sendQ2EOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int) {
 	data, err := json.Marshal(batch)
 	if err != nil {

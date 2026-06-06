@@ -9,11 +9,9 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-const dateLayout = "2006-01-02"
-
 func newProcess() node.ProcessFunc {
-	start, _ := time.Parse(dateLayout, "2022-09-01")
-	end, _ := time.Parse(dateLayout, "2022-09-05")
+	start, _ := time.Parse(dateLayout, periodStart)
+	end, _ := time.Parse(dateLayout, periodEnd)
 	end = end.Add(24 * time.Hour)
 
 	var seen, passed, parseErrs int
@@ -25,12 +23,17 @@ func newProcess() node.ProcessFunc {
 		out := make([]protocol.Transaction, 0, len(batch.Transactions))
 		for _, t := range batch.Transactions {
 			seen++
-			date := strings.ReplaceAll(t.Timestamp[:10], "/", "-")
+			in := filterInput{
+				Timestamp:       t.Timestamp,
+				AmountPaid:      t.AmountPaid,
+				PaymentCurrency: t.PaymentCurrency,
+			}
+			date := strings.ReplaceAll(in.Timestamp[:10], "/", "-")
 			ts, err := time.Parse(dateLayout, date)
 			if err != nil {
 				parseErrs++
 				if parseErrs <= 3 {
-					log.Printf("[period1_q5_filter] parse error txn=%d timestamp=%q: %v", seen, t.Timestamp, err)
+					log.Printf("[period1_q5_filter] parse error txn=%d timestamp=%q: %v", seen, in.Timestamp, err)
 				}
 				continue
 			}
@@ -40,7 +43,11 @@ func newProcess() node.ProcessFunc {
 				if passed <= 3 || passed%5000 == 0 {
 					log.Printf("[period1_q5_filter] pass #%d date=%s (seen=%d)", passed, date, seen)
 				}
-				out = append(out, t)
+				out = append(out, protocol.Transaction{
+					Timestamp:       in.Timestamp,
+					AmountPaid:      in.AmountPaid,
+					PaymentCurrency: in.PaymentCurrency,
+				})
 			} else if seen <= 5 {
 				log.Printf("[period1_q5_filter] skip txn=%d date=%s (out of window)", seen, date)
 			}
