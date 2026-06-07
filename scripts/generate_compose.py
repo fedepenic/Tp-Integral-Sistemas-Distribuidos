@@ -309,6 +309,7 @@ def services_extra_env(name: str, env: dict[str, str], active_queries: set[str])
         return {
             "OUTPUT_KEYS":              cleaner_output_keys(active_queries),
             "ACCOUNTS_JOIN_PARTITIONS": env.get("N_JOIN_Q2", "1"),
+            "SKIP_CLEANING":            env.get("SKIP_CLEANING", "false"),
         }
     return {}
 

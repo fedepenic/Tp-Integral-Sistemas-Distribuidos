@@ -10,20 +10,30 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
-func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions int) node.ProcessFunc {
+func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions int, skipCleaning bool) node.ProcessFunc {
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		switch batch.Type {
 		case protocol.BatchTypeTransactions:
-			cleaned := cleanTransactions(batch.Transactions)
-			if len(cleaned) == 0 {
+			var txns []protocol.Transaction
+			if skipCleaning {
+				txns = batch.Transactions
+			} else {
+				txns = cleanTransactions(batch.Transactions)
+			}
+			if len(txns) == 0 {
 				return protocol.Batch{}, false
 			}
-			return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: cleaned}, true
+			return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: txns}, true
 
 		case protocol.BatchTypeAccounts:
-			cleaned := cleanAccounts(batch.Accounts)
-			if len(cleaned) > 0 {
-				sendAccountBatches(accountsMW, batch.ClientID, cleaned, keyPrefix, partitions)
+			var accounts []protocol.Account
+			if skipCleaning {
+				accounts = batch.Accounts
+			} else {
+				accounts = cleanAccounts(batch.Accounts)
+			}
+			if len(accounts) > 0 {
+				sendAccountBatches(accountsMW, batch.ClientID, accounts, keyPrefix, partitions)
 			}
 			return protocol.Batch{}, false
 

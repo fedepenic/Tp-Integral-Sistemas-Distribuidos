@@ -39,5 +39,7 @@ func main() {
 	}
 	defer accountsMW.Close()
 
-	svc.Run(inputMW, outputMW, newProcess(accountsMW, accountsKeyPrefix, accountsPartitions))
+	skipCleaning := strings.EqualFold(config.EnvOrDefault("SKIP_CLEANING", "false"), "true")
+
+	svc.Run(inputMW, outputMW, newProcess(accountsMW, accountsKeyPrefix, accountsPartitions, skipCleaning))
 }

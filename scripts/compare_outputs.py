@@ -52,7 +52,11 @@ for client in sorted(os.scandir(notebook_dir), key=lambda e: e.name):
         if nb_sorted.equals(sys_sorted):
             print(f"{client.name}/{query_file}: OK")
         else:
-            print(f"{client.name}/{query_file}: DIFFERENT")
+            merged = nb_sorted.merge(sys_sorted, how="outer", indicator=True)
+            only_nb  = (merged["_merge"] == "left_only").sum()
+            only_sys = (merged["_merge"] == "right_only").sum()
+            print(f"{client.name}/{query_file}: DIFFERENT "
+                  f"(notebook_only={only_nb} system_only={only_sys})")
             all_match = False
 
 print()
