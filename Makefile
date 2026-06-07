@@ -57,7 +57,7 @@ run-notebook-local:
 	mkdir -p output/notebook
 	set -a && . ./.env && $(PYTHON) scripts/run_analysis.py
 
-run-system:
+run-system: stop-system
 	docker-compose -f system/docker-compose.yml up --build --remove-orphans
 
 stop-system:
