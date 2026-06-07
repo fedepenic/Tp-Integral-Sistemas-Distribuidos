@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	svc := node.New("avg_per_payment_format")
+	svc := node.NewExclusive("avg_per_payment_format")
 	conn := svc.Conn()
 
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
