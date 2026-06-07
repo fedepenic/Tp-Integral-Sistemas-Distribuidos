@@ -9,10 +9,10 @@ func main() {
 	svc := node.New("period1_filter")
 	conn := svc.Conn()
 
-	inputMW := config.Queue("INPUT_QUEUE", conn)
+	inputMW := config.SharedQueue("INPUT_QUEUE_NAME", "INPUT_EXCHANGE", []string{""}, conn)
 	defer inputMW.Close()
 
-	outQ3MW := config.Exchange("OUTPUT_Q3_EXCHANGE", []string{""}, conn)
+	outQ3MW := config.Exchange("OUTPUT_Q3_EXCHANGE", []string{}, conn)
 	defer outQ3MW.Close()
 
 	outFOMW := config.Exchange("OUTPUT_Q4_FO_EXCHANGE", []string{}, conn)
@@ -21,5 +21,17 @@ func main() {
 	outFIMW := config.Exchange("OUTPUT_Q4_FI_EXCHANGE", []string{}, conn)
 	defer outFIMW.Close()
 
-	svc.Run(inputMW, outQ3MW, newProcess(outQ3MW, outFOMW, outFIMW))
+	q3KeyPrefix  := config.EnvOrDefault("OUTPUT_Q3_KEY_PREFIX", "avgfmt")
+	q3Partitions := config.MustEnvInt("OUTPUT_Q3_PARTITIONS")
+	foKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FO_KEY_PREFIX", "fo")
+	foPartitions := config.MustEnvInt("OUTPUT_Q4_FO_PARTITIONS")
+	fiKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FI_KEY_PREFIX", "fi")
+	fiPartitions := config.MustEnvInt("OUTPUT_Q4_FI_PARTITIONS")
+
+	svc.Run(inputMW, outQ3MW, newProcess(
+		outQ3MW, outFOMW, outFIMW,
+		q3KeyPrefix, q3Partitions,
+		foKeyPrefix, foPartitions,
+		fiKeyPrefix, fiPartitions,
+	))
 }

@@ -20,12 +20,12 @@ func envOrDefault(key, def string) string {
 }
 
 func main() {
-	port         := envOrDefault("GATEWAY_PORT", "8080")
-	host         := envOrDefault("RABBITMQ_HOST", "rabbitmq")
-	portStr      := envOrDefault("RABBITMQ_PORT", "5672")
-	outputQueue  := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
+	port := envOrDefault("GATEWAY_PORT", "8080")
+	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
+	portStr := envOrDefault("RABBITMQ_PORT", "5672")
+	outputQueue := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
 	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
-	outputDir    := envOrDefault("OUTPUT_DIR", "/output")
+	outputDir := envOrDefault("OUTPUT_DIR", "/output")
 
 	rabbitPort, err := strconv.Atoi(portStr)
 	if err != nil {

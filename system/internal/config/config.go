@@ -19,6 +19,17 @@ func MustEnv(key string) string {
 	return v
 }
 
+// MustEnvInt retorna el valor entero de la variable de entorno key.
+// Termina el proceso con error si la variable no es un entero válido.
+func MustEnvInt(key string) int {
+	v := MustEnv(key)
+	value, err := strconv.Atoi(v)
+	if err != nil {
+		log.Fatalf("[config] env var %s must be a number: %v", key, err)
+	}
+	return value
+}
+
 // EnvOrDefault retorna el valor de la variable de entorno key,
 // o def si la variable no está definida o está vacía.
 func EnvOrDefault(key, def string) string {

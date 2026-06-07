@@ -17,6 +17,7 @@ type queryWriter struct {
 	file          *os.File
 	csv           *csv.Writer
 	headerWritten bool
+	seenAccounts  map[string]bool // for deduplication (Q4)
 }
 
 // reporter consumes from the reports queue and writes results to CSV files,
@@ -48,12 +49,25 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	}
 
 	path := filepath.Join(dir, "query_"+queryID+".csv")
-	f, err := os.Create(path)
+
+	// If the file already exists a previous EOF closed it and late-arriving
+	// batches are about to be appended. Open in append mode so we don't
+	// truncate the data that was already written.
+	_, statErr := os.Stat(path)
+	alreadyExists := statErr == nil
+
+	var f *os.File
+	var err error
+	if alreadyExists {
+		f, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	} else {
+		f, err = os.Create(path)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("create output file %s: %w", path, err)
+		return nil, fmt.Errorf("open output file %s: %w", path, err)
 	}
 
-	w := &queryWriter{file: f, csv: csv.NewWriter(f)}
+	w := &queryWriter{file: f, csv: csv.NewWriter(f), headerWritten: alreadyExists}
 	r.writers[key] = w
 	return w, nil
 }
@@ -62,6 +76,19 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 	key := clientID + "/" + queryID
 	w, ok := r.writers[key]
 	if !ok {
+		// No data arrived — still create an empty file with headers so the
+		// comparison script finds a file even when the query has no results.
+		w, err := r.writerFor(clientID, queryID)
+		if err != nil {
+			log.Printf("reporter: create empty file client %s query %s: %v", clientID, queryID, err)
+			return
+		}
+		if !w.headerWritten {
+			writeEmptyHeaders(w, queryID)
+		}
+		w.csv.Flush()
+		w.file.Close()
+		delete(r.writers, key)
 		return
 	}
 	w.csv.Flush()
@@ -69,6 +96,23 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 		log.Printf("reporter: close file for client %s query %s: %v", clientID, queryID, err)
 	}
 	delete(r.writers, key)
+}
+
+// writeEmptyHeaders writes the column headers for a query with no result rows.
+func writeEmptyHeaders(w *queryWriter, queryID string) {
+	switch queryID {
+	case "1":
+		w.csv.Write([]string{"From Bank", "Account", "To Bank", "Account.1", "Amount Paid"})
+	case "2":
+		w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
+	case "3":
+		w.csv.Write([]string{"From Bank", "Account", "Payment Format", "Amount Paid"})
+	case "4":
+		w.csv.Write([]string{"Bank", "Account"})
+	case "5":
+		w.csv.Write([]string{"quantity"})
+	}
+	w.headerWritten = true
 }
 
 func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
@@ -97,6 +141,20 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		log.Printf("reporter: count received client=%s query=%s count=%d", batch.ClientID, batch.QueryID, batch.Count)
 		if err := r.writeCount(w, batch.Count); err != nil {
 			log.Printf("reporter: write count for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
+	} else if batch.QueryID == "4" {
+		log.Printf("reporter: q4 batch client=%s records=%d", batch.ClientID, len(batch.Records))
+		if err := writeQ4Rows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+			nack()
+			return
+		}
+	} else if batch.QueryID == "3" {
+		log.Printf("reporter: q3 batch client=%s txns=%d", batch.ClientID, len(batch.Transactions))
+		if err := writeQ3Rows(w, batch); err != nil {
+			log.Printf("reporter: write rows for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
 			nack()
 			return
 		}
@@ -144,5 +202,25 @@ func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 			})
 		}
 	}
+
+	if batch.DataType == "max_per_bank" && len(batch.Records) > 0 {
+		var results []maxPerBankResult
+		if err := json.Unmarshal(batch.Records, &results); err != nil {
+			return fmt.Errorf("unmarshal max_per_bank records: %w", err)
+		}
+		if !w.headerWritten {
+			w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
+			w.headerWritten = true
+		}
+		for _, res := range results {
+			w.csv.Write([]string{
+				res.BankID,
+				res.SourceAccount,
+				res.BankName,
+				strconv.FormatFloat(res.MaxAmountUSD, 'f', -1, 64),
+			})
+		}
+	}
+
 	return w.csv.Error()
 }

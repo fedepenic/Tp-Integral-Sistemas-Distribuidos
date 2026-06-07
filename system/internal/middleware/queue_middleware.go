@@ -62,6 +62,15 @@ func NewQueueMiddleware(queueName string, connectionSettings ConnSettings) (Midd
 // auto-generated EXCLUSIVE queue per instance, which gives fanout-style
 // duplicate delivery instead of load balancing.
 func NewSharedQueueMiddleware(queueName, exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
+	return NewSharedQueueMultiExchangeMiddleware(queueName, []string{exchange}, keys, connectionSettings)
+}
+
+// NewSharedQueueMultiExchangeMiddleware declares a named, durable,
+// non-exclusive queue and binds it to multiple direct exchanges with the same
+// routing keys. This is useful for joiners that consume a multiplexed stream
+// from two upstream branches while preserving a single FIFO input per
+// partition.
+func NewSharedQueueMultiExchangeMiddleware(queueName string, exchanges []string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
 	connStr := fmt.Sprintf("amqp://guest:guest@%s:%d/", connectionSettings.Hostname, connectionSettings.Port)
 	conn, err := amqp.Dial(connStr)
 	if err != nil {
@@ -74,10 +83,12 @@ func NewSharedQueueMiddleware(queueName, exchange string, keys []string, connect
 		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareDisconnected, err)
 	}
 
-	if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+	for _, exchange := range exchanges {
+		if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
+			ch.Close()
+			conn.Close()
+			return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+		}
 	}
 
 	q, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
@@ -87,11 +98,13 @@ func NewSharedQueueMiddleware(queueName, exchange string, keys []string, connect
 		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
 	}
 
-	for _, key := range keys {
-		if err := ch.QueueBind(q.Name, key, exchange, false, nil); err != nil {
-			ch.Close()
-			conn.Close()
-			return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+	for _, exchange := range exchanges {
+		for _, key := range keys {
+			if err := ch.QueueBind(q.Name, key, exchange, false, nil); err != nil {
+				ch.Close()
+				conn.Close()
+				return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+			}
 		}
 	}
 

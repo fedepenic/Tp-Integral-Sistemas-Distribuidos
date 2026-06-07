@@ -12,8 +12,20 @@ func newProcess() node.ProcessFunc {
 		}
 		out := make([]protocol.Transaction, 0, len(batch.Transactions))
 		for _, t := range batch.Transactions {
-			if t.AmountPaid < t.AvgForFormat/100.0 {
-				out = append(out, t)
+			in := filterInput{
+				AmountPaid:    t.AmountPaid,
+				AvgForFormat:  t.AvgForFormat,
+				FromBank:      t.FromBank,
+				FromAccount:   t.FromAccount,
+				PaymentFormat: t.PaymentFormat,
+			}
+			if in.AmountPaid < in.AvgForFormat/100.0 {
+				out = append(out, protocol.Transaction{
+					FromBank:      in.FromBank,
+					FromAccount:   in.FromAccount,
+					PaymentFormat: in.PaymentFormat,
+					AmountPaid:    in.AmountPaid,
+				})
 			}
 		}
 		if len(out) == 0 {

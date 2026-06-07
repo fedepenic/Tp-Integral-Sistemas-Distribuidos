@@ -18,5 +18,8 @@ func main() {
 	directMW := config.Exchange("OUTPUT_DIRECT_EXCHANGE", []string{}, conn)
 	defer directMW.Close()
 
-	svc.Run(inputMW, fanoutMW, newProcess(directMW))
+	directKeyPrefix  := config.EnvOrDefault("OUTPUT_DIRECT_KEY_PREFIX", "maxbank")
+	directPartitions := config.MustEnvInt("OUTPUT_DIRECT_PARTITIONS")
+
+	svc.Run(inputMW, fanoutMW, newProcess(directMW, directKeyPrefix, directPartitions))
 }

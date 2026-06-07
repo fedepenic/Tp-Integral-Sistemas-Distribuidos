@@ -134,6 +134,6 @@ func newProcess() node.ProcessFunc {
 		if batch.Type == protocol.BatchTypeTransactions {
 			return conv.convertBatch(batch), true
 		}
-		return batch, true
+		return protocol.Batch{}, false
 	}
 }

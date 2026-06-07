@@ -3,7 +3,10 @@ import os
 import shutil
 
 sample_pct        = float(os.environ.get('DATASET_PERCENTAGE', 10))
-n_clients         = int(os.environ.get('N_CLIENTS', 5))
+
+# Use N_WORKERS override if set, otherwise use N_CLIENTS
+n_workers = int(os.environ.get('N_WORKERS', 0))
+n_clients = n_workers if n_workers > 0 else int(os.environ.get('N_CLIENTS', 5))
 transactions_file = os.environ.get('TRANSACTIONS_FILE', 'LI-Medium_Trans.csv')
 accounts_file     = os.environ.get('ACCOUNTS_FILE', 'LI-Medium_accounts.csv')
 

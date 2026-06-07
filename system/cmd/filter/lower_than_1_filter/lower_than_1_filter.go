@@ -16,16 +16,17 @@ func newProcess() node.ProcessFunc {
 		out := make([]protocol.Transaction, 0, len(batch.Transactions))
 		for _, t := range batch.Transactions {
 			seen++
-			ok := t.AmountPaid < 1.0
+			in := filterInput{AmountPaid: t.AmountPaid}
+			ok := in.AmountPaid < amountThreshold
 			if seen <= 5 {
-				log.Printf("[lower_than_1_filter] txn=%d amount=%.6f pass=%v", seen, t.AmountPaid, ok)
+				log.Printf("[lower_than_1_filter] txn=%d amount=%.6f pass=%v", seen, in.AmountPaid, ok)
 			}
 			if ok {
 				passed++
 				if passed%1000 == 0 {
 					log.Printf("[lower_than_1_filter] passed=%d seen=%d", passed, seen)
 				}
-				out = append(out, t)
+				out = append(out, protocol.Transaction{AmountPaid: in.AmountPaid})
 			}
 		}
 		if len(out) == 0 {

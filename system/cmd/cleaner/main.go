@@ -17,6 +17,10 @@ func main() {
 	outputExchange := config.EnvOrDefault("OUTPUT_EXCHANGE", "transactions_clean")
 	outputKeys     := strings.Split(config.EnvOrDefault("OUTPUT_KEYS", "txn_for_usd,txn_for_q5"), ",")
 
+	accountsExchange   := config.MustEnv("ACCOUNTS_JOIN_EXCHANGE")
+	accountsKeyPrefix  := config.EnvOrDefault("ACCOUNTS_JOIN_KEY_PREFIX", "joinq2")
+	accountsPartitions := config.MustEnvInt("ACCOUNTS_JOIN_PARTITIONS")
+
 	inputMW, err := middleware.CreateQueueMiddleware(inputQueue, conn)
 	if err != nil {
 		log.Fatalf("[cleaner] connect to input queue: %v", err)
@@ -29,5 +33,11 @@ func main() {
 	}
 	defer outputMW.Close()
 
-	svc.Run(inputMW, outputMW, newProcess())
+	accountsMW, err := middleware.CreateExchangeMiddleware(accountsExchange, []string{}, conn)
+	if err != nil {
+		log.Fatalf("[cleaner] connect to accounts exchange: %v", err)
+	}
+	defer accountsMW.Close()
+
+	svc.Run(inputMW, outputMW, newProcess(accountsMW, accountsKeyPrefix, accountsPartitions))
 }

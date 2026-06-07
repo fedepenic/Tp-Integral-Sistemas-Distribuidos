@@ -10,11 +10,13 @@ import (
 type BatchType string
 
 const (
-	BatchTypeTransactions BatchType = "transactions"
-	BatchTypeAccounts     BatchType = "accounts"
-	BatchTypeEOF          BatchType = "eof"
-	BatchTypeACK          BatchType = "ack"
-	BatchTypeCount        BatchType = "count"
+	BatchTypeData          BatchType = "data"
+	BatchTypeTransactions  BatchType = "transactions"
+	BatchTypeAccounts      BatchType = "accounts"
+	BatchTypeScatterGather BatchType = "scatter_gather"
+	BatchTypeEOF           BatchType = "eof"
+	BatchTypeACK           BatchType = "ack"
+	BatchTypeCount         BatchType = "count"
 )
 
 type Transaction struct {
@@ -40,13 +42,25 @@ type Account struct {
 	EntityName    string `json:"entity_name"`
 }
 
+type ScatterGatherItem struct {
+	FromBank      string `json:"from_bank"`
+	FromAccount   string `json:"from_account"`
+	MiddleBank    string `json:"middle_bank"`
+	MiddleAccount string `json:"middle_account"`
+	ToBank        string `json:"to_bank"`
+	ToAccount     string `json:"to_account"`
+}
+
 type Batch struct {
-	Type         BatchType     `json:"type"`
-	ClientID     string        `json:"client_id,omitempty"`
-	QueryID      string        `json:"query_id,omitempty"`
-	Transactions []Transaction `json:"transactions,omitempty"`
-	Accounts     []Account     `json:"accounts,omitempty"`
-	Count        int64         `json:"count,omitempty"`
+	Type               BatchType           `json:"type"`
+	ClientID           string              `json:"client_id,omitempty"`
+	QueryID            string              `json:"query_id,omitempty"`
+	DataType           string              `json:"data_type,omitempty"`
+	Transactions       []Transaction       `json:"transactions,omitempty"`
+	Accounts           []Account           `json:"accounts,omitempty"`
+	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`
+	Records            json.RawMessage     `json:"records,omitempty"`
+	Count              int64               `json:"count,omitempty"`
 }
 
 func Send(conn net.Conn, batch Batch) error {
