@@ -15,23 +15,17 @@ func main() {
 	outQ3MW := config.Exchange("OUTPUT_Q3_EXCHANGE", []string{}, conn)
 	defer outQ3MW.Close()
 
-	outFOMW := config.Exchange("OUTPUT_Q4_FO_EXCHANGE", []string{}, conn)
-	defer outFOMW.Close()
-
-	outFIMW := config.Exchange("OUTPUT_Q4_FI_EXCHANGE", []string{}, conn)
-	defer outFIMW.Close()
+	outQ4MW := config.Exchange("OUTPUT_Q4_EXCHANGE", []string{}, conn)
+	defer outQ4MW.Close()
 
 	q3KeyPrefix  := config.EnvOrDefault("OUTPUT_Q3_KEY_PREFIX", "avgfmt")
 	q3Partitions := config.MustEnvInt("OUTPUT_Q3_PARTITIONS")
-	foKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FO_KEY_PREFIX", "fo")
-	foPartitions := config.MustEnvInt("OUTPUT_Q4_FO_PARTITIONS")
-	fiKeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_FI_KEY_PREFIX", "fi")
-	fiPartitions := config.MustEnvInt("OUTPUT_Q4_FI_PARTITIONS")
+	q4KeyPrefix  := config.EnvOrDefault("OUTPUT_Q4_KEY_PREFIX", "q4sf")
+	q4Partitions := config.MustEnvInt("OUTPUT_Q4_PARTITIONS")
 
 	svc.Run(inputMW, outQ3MW, newProcess(
-		outQ3MW, outFOMW, outFIMW,
+		outQ3MW, outQ4MW,
 		q3KeyPrefix, q3Partitions,
-		foKeyPrefix, foPartitions,
-		fiKeyPrefix, fiPartitions,
+		q4KeyPrefix, q4Partitions,
 	))
 }

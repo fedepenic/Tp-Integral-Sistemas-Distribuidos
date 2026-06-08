@@ -61,12 +61,10 @@ NAMED_FILTERS = [
         "INPUT_QUEUE_NAME":       "period1_filter_input",
         "INPUT_EXCHANGE":         "usd_filtered",
         "EOF_BROADCAST_EXCHANGE": "period1_filter_eof",
-        "OUTPUT_Q3_EXCHANGE":      "usd_period1_for_q3",
-        "OUTPUT_Q3_KEY_PREFIX":    "avgfmt",
-        "OUTPUT_Q4_FO_EXCHANGE":   "usd_period1_for_q4_fo",
-        "OUTPUT_Q4_FO_KEY_PREFIX": "fo",
-        "OUTPUT_Q4_FI_EXCHANGE":   "usd_period1_for_q4_fi",
-        "OUTPUT_Q4_FI_KEY_PREFIX": "fi",
+        "OUTPUT_Q3_EXCHANGE":     "usd_period1_for_q3",
+        "OUTPUT_Q3_KEY_PREFIX":   "avgfmt",
+        "OUTPUT_Q4_EXCHANGE":     "usd_period1_for_q4",
+        "OUTPUT_Q4_KEY_PREFIX":   "q4sf",
     }),
     ("amt_avg_filter", "lower_than_avg_filter", "N_AMT_AVG_FILTER", "N_JOIN_Q3", {
         "INPUT_QUEUE":  "q3_candidates",
@@ -135,10 +133,20 @@ AGGREGATORS = [
         },
     ),
     (
+        "fan_src_filter",
+        "aggregators/fan_src_filter",
+        "N_SRC_FILTER",
+        "N_PERIOD1_FILTER",
+        {
+            "INPUT_EXCHANGE":   "usd_period1_for_q4",
+            "INPUT_KEY_PREFIX": "q4sf",
+        },
+    ),
+    (
         "fan_in",
         "aggregators/fan_in",
         "N_FI",
-        "N_PERIOD1_FILTER",
+        "N_SRC_FILTER",
         {
             "INPUT_EXCHANGE":   "usd_period1_for_q4_fi",
             "INPUT_KEY_PREFIX": "fi",
@@ -149,7 +157,7 @@ AGGREGATORS = [
         "fan_out",
         "aggregators/fan_out",
         "N_FO",
-        "N_PERIOD1_FILTER",
+        "N_SRC_FILTER",
         {
             "INPUT_EXCHANGE":   "usd_period1_for_q4_fo",
             "INPUT_KEY_PREFIX": "fo",
@@ -228,6 +236,7 @@ NAMED_FILTER_QUERIES: dict[str, set[str]] = {
 AGGREGATOR_QUERIES: dict[str, set[str]] = {
     "max_per_bank":           {"2"},
     "avg_per_payment_format": {"3"},
+    "fan_src_filter":         {"4"},
     "fan_in":                 {"4"},
     "fan_out":                {"4"},
     "scatter_gather":         {"4"},
@@ -297,9 +306,8 @@ def named_filters_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         }
     if name == "period1_filter":
         return {
-            "OUTPUT_Q3_PARTITIONS":    env.get("N_AVG_PER_PAY", "1"),
-            "OUTPUT_Q4_FO_PARTITIONS": env.get("N_FO", "1"),
-            "OUTPUT_Q4_FI_PARTITIONS": env.get("N_FI", "1"),
+            "OUTPUT_Q3_PARTITIONS": env.get("N_AVG_PER_PAY", "1"),
+            "OUTPUT_Q4_PARTITIONS": env.get("N_SRC_FILTER", "1"),
         }
     return {}
 
@@ -324,6 +332,15 @@ def aggregators_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         return {
             "OUTPUT_KEY_PREFIX": env.get("OUTPUT_KEY_PREFIX", "joinerformat"),
             "OUTPUT_PARTITIONS": env.get("N_JOIN_Q3", "1"),
+        }
+    if name == "fan_src_filter":
+        return {
+            "OUTPUT_FO_EXCHANGE":   "usd_period1_for_q4_fo",
+            "OUTPUT_FO_KEY_PREFIX": "fo",
+            "OUTPUT_FO_PARTITIONS": env.get("N_FO", "1"),
+            "OUTPUT_FI_EXCHANGE":   "usd_period1_for_q4_fi",
+            "OUTPUT_FI_KEY_PREFIX": "fi",
+            "OUTPUT_FI_PARTITIONS": env.get("N_FI", "1"),
         }
     if name == "fan_in":
         return {

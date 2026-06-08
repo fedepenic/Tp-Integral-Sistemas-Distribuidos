@@ -13,10 +13,9 @@ import (
 )
 
 func newProcess(
-	outQ3MW, outFOMW, outFIMW middleware.Middleware,
+	outQ3MW, outQ4MW middleware.Middleware,
 	q3KeyPrefix string, q3Partitions int,
-	foKeyPrefix string, foPartitions int,
-	fiKeyPrefix string, fiPartitions int,
+	q4KeyPrefix string, q4Partitions int,
 ) node.ProcessFunc {
 	start, _ := time.Parse(dateLayout, periodStart)
 	end, _ := time.Parse(dateLayout, periodEnd)
@@ -25,8 +24,7 @@ func newProcess(
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
 			sendPartitionedEOF(outQ3MW, batch, q3KeyPrefix, q3Partitions)
-			sendPartitionedEOF(outFOMW, batch, foKeyPrefix, foPartitions)
-			sendPartitionedEOF(outFIMW, batch, fiKeyPrefix, fiPartitions)
+			sendPartitionedEOF(outQ4MW, batch, q4KeyPrefix, q4Partitions)
 			return batch, true
 		}
 		if batch.Type != protocol.BatchTypeTransactions {
@@ -53,10 +51,8 @@ func newProcess(
 			return protocol.Batch{}, false
 		}
 		sendQ3Partitioned(outQ3MW, batch.ClientID, out, q3KeyPrefix, q3Partitions)
-		sendQ4Partitioned(outFOMW, batch.ClientID, out, foKeyPrefix, foPartitions,
+		sendQ4Partitioned(outQ4MW, batch.ClientID, out, q4KeyPrefix, q4Partitions,
 			func(in filterInput) string { return in.FromBank + "|" + in.FromAccount })
-		sendQ4Partitioned(outFIMW, batch.ClientID, out, fiKeyPrefix, fiPartitions,
-			func(in filterInput) string { return in.ToBank + "|" + in.ToAccount })
 		return protocol.Batch{}, false
 	}
 }
