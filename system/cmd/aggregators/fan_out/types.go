@@ -3,7 +3,7 @@ package main
 type fanOutEntry struct {
 	fromBank string
 	fromAcct string
-	distinct map[string]accountRef // refKey → accountRef
+	refs     []accountRef
 }
 
 type fanOutResult struct {
@@ -16,8 +16,4 @@ type fanOutResult struct {
 type accountRef struct {
 	bank    string
 	account string
-}
-
-func refKey(r accountRef) string {
-	return r.bank + "|" + r.account
 }

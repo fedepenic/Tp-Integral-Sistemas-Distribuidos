@@ -45,7 +45,7 @@ func main() {
 
 	log.Printf("[joiner_sg] started fo_upstream=%d fi_upstream=%d", foUpstream, fiUpstream)
 
-	svc.Run(inputMW, outputMW, newProcess())
+	svc.Run(inputMW, outputMW, newProcess(outputMW))
 }
 
 func mustEnv(key string) string {

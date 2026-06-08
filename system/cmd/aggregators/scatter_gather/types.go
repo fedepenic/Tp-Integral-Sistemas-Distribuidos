@@ -7,7 +7,7 @@ type sgEntry struct {
 	fromAccount string
 	toBank      string
 	toAccount   string
-	middles     map[string]struct{}
+	count       int
 }
 
 type scatterGatherResult struct {

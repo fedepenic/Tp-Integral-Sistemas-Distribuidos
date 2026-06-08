@@ -5,14 +5,11 @@ type accountRef struct {
 	account string
 }
 
-func refKey(r accountRef) string {
-	return r.bank + "|" + r.account
-}
 
 type fanInEntry struct {
-	toBank   string
-	toAcct   string
-	distinct map[string]accountRef // refKey → accountRef
+	toBank string
+	toAcct string
+	refs   []accountRef
 }
 
 type fanInResult struct {

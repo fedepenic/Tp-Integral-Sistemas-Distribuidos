@@ -30,6 +30,7 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.Type != protocol.BatchTypeScatterGather {
 		return protocol.Batch{}, false
 	}
+	log.Printf("[scatter_gather] batch client=%s items=%d", batch.ClientID, len(batch.ScatterGatherItems))
 
 	byKey, ok := sg.state[batch.ClientID]
 	if !ok {
@@ -45,12 +46,10 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 				fromAccount: item.FromAccount,
 				toBank:      item.ToBank,
 				toAccount:   item.ToAccount,
-				middles:     make(map[string]struct{}),
 			}
 			byKey[sgKey] = entry
 		}
-		middleKey := item.MiddleBank + "|" + item.MiddleAccount
-		entry.middles[middleKey] = struct{}{}
+		entry.count++
 	}
 	return protocol.Batch{}, false
 }
@@ -62,11 +61,13 @@ func (sg *scatterGather) flush(clientID string) {
 	}
 	delete(sg.state, clientID)
 
+	passed, total := 0, len(byKey)
 	for _, entry := range byKey {
-		count := len(entry.middles)
-		if count < scatterThreshold {
+		count := entry.count
+		if count <= scatterThreshold {
 			continue
 		}
+		passed++
 		res := scatterGatherResult{
 			FromBank:    entry.fromBank,
 			FromAccount: entry.fromAccount,
@@ -89,6 +90,8 @@ func (sg *scatterGather) flush(clientID string) {
 			log.Printf("[scatter_gather] send result: %v", err)
 		}
 	}
+
+	log.Printf("[scatter_gather] flush client=%s total_pairs=%d passed_threshold=%d", clientID, total, passed)
 
 	eofBatch := protocol.Batch{
 		Type:     protocol.BatchTypeEOF,

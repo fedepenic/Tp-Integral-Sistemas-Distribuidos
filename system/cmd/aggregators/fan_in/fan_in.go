@@ -35,6 +35,7 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
 	}
+	log.Printf("[fan_in] batch client=%s txns=%d", batch.ClientID, len(batch.Transactions))
 
 	byTo, ok := f.state[batch.ClientID]
 	if !ok {
@@ -46,14 +47,12 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 		entry, ok := byTo[toKey]
 		if !ok {
 			entry = &fanInEntry{
-				toBank:   tx.ToBank,
-				toAcct:   tx.ToAccount,
-				distinct: make(map[string]accountRef),
+				toBank: tx.ToBank,
+				toAcct: tx.ToAccount,
 			}
 			byTo[toKey] = entry
 		}
-		from := accountRef{bank: tx.FromBank, account: tx.FromAccount}
-		entry.distinct[refKey(from)] = from
+		entry.refs = append(entry.refs, accountRef{bank: tx.FromBank, account: tx.FromAccount})
 	}
 	return protocol.Batch{}, false
 }
@@ -64,10 +63,13 @@ func (f *fanIn) flush(clientID string) {
 		return
 	}
 	delete(f.state, clientID)
+	log.Printf("[fan_in] flush client=%s dest_accounts=%d", clientID, len(byTo))
 
 	partitioned := make(map[int][]fanInResult)
+	total := 0
 	for _, entry := range byTo {
-		for _, from := range entry.distinct {
+		for _, from := range entry.refs {
+			total++
 			res := fanInResult{
 				MiddleBank:    from.bank,
 				MiddleAccount: from.account,
@@ -79,6 +81,7 @@ func (f *fanIn) flush(clientID string) {
 		}
 	}
 
+	log.Printf("[fan_in] flush client=%s emitting results=%d", clientID, total)
 	for partition, results := range partitioned {
 		routingKey := worker.RoutingKey(f.outputKeyPrefix, partition)
 		raw, err := json.Marshal(results)
