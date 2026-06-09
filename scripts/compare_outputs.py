@@ -53,10 +53,33 @@ for client in sorted(os.scandir(notebook_dir), key=lambda e: e.name):
             print(f"{client.name}/{query_file}: OK")
         else:
             merged = nb_sorted.merge(sys_sorted, how="outer", indicator=True)
-            only_nb  = (merged["_merge"] == "left_only").sum()
-            only_sys = (merged["_merge"] == "right_only").sum()
-            print(f"{client.name}/{query_file}: DIFFERENT "
-                  f"(notebook_only={only_nb} system_only={only_sys})")
+            only_nb_df = merged[merged["_merge"] == "left_only"].copy()
+            only_sys_df = merged[merged["_merge"] == "right_only"].copy()
+            
+            print(f"\n{client.name}/{query_file}: DIFFERENT")
+            print(f"  notebook_only={len(only_nb_df)} system_only={len(only_sys_df)}")
+            
+            # Imprimir líneas solo en notebook
+            if len(only_nb_df) > 0:
+                print(f"\n  --- Lines only in NOTEBOOK ({len(only_nb_df)}): ---")
+                only_nb_display = only_nb_df.drop(columns=['_merge'])
+                print(only_nb_display.to_string(index=False))
+            
+            # Imprimir líneas solo en system
+            if len(only_sys_df) > 0:
+                print(f"\n  --- Lines only in SYSTEM ({len(only_sys_df)}): ---")
+                only_sys_display = only_sys_df.drop(columns=['_merge'])
+                print(only_sys_display.to_string(index=False))
+            
+            # También comparar fila por fila si tienen el mismo número de filas
+            if len(nb_sorted) == len(sys_sorted):
+                # Comparar fila por fila
+                for idx in range(len(nb_sorted)):
+                    if not nb_sorted.iloc[idx].equals(sys_sorted.iloc[idx]):
+                        print(f"\n  --- Row {idx} differs: ---")
+                        print(f"    Notebook: {nb_sorted.iloc[idx].to_dict()}")
+                        print(f"    System:   {sys_sorted.iloc[idx].to_dict()}")
+            
             all_match = False
 
 print()
