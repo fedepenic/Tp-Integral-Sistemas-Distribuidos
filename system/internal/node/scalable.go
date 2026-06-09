@@ -48,6 +48,14 @@ type Scalable struct {
 	clientPending  map[string]int
 	eofInFlight    map[string]bool // true while handleEOF is sending the downstream EOF
 
+	// processMu serializes every ProcessFunc call. fn runs from two goroutines —
+	// the data consumer (handleData) and the EOF/flush consumer (handleEOF) — and
+	// the drain barrier only gates the start of a flush, so a different client's
+	// data batch can run fn concurrently with another client's flush. Stateful
+	// nodes (aggregators, joiners) mutate shared maps in fn, so without this lock
+	// that is a concurrent map access. Held around fn only; never nested with mu.
+	processMu sync.Mutex
+
 	// selfOnly suppresses peer-broadcast: the EOF exchange only routes back to
 	// this instance. Use this for nodes with exclusive per-instance input queues
 	// (e.g. max_per_bank) where each instance independently receives all upstream
@@ -227,7 +235,9 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		s.clientPending[batch.ClientID]++
 		s.mu.Unlock()
 
+		s.processMu.Lock()
 		result, ok := fn(batch)
+		s.processMu.Unlock()
 
 		if !ok {
 			s.mu.Lock()
@@ -320,7 +330,10 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		// If fn returns (eofBatch, true) it means the node handled EOF
 		// forwarding itself (e.g. via SendWithKey per partition). Skip our own
 		// outputMW.Send so the EOF is not duplicated.
-		if result, ok := fn(batch); ok {
+		s.processMu.Lock()
+		result, ok := fn(batch)
+		s.processMu.Unlock()
+		if ok {
 			if result.Type == protocol.BatchTypeEOF {
 				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, clientID)
 				s.mu.Lock()
