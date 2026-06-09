@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -16,6 +17,12 @@ type ExchangeMiddleware struct {
 	keys      []string
 	queueName string
 	stopCh    chan struct{}
+	// sendMu serializes publishes. An amqp Channel is not safe for concurrent
+	// publishing: a single publish spans several frames (method, header, body)
+	// and the library locks the connection per-frame, so concurrent senders can
+	// interleave frames and trip a 505 UNEXPECTED_FRAME that closes the
+	// connection. Nodes publish from two goroutines (data + EOF), so we guard it.
+	sendMu sync.Mutex
 }
 
 func NewExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
@@ -143,6 +150,8 @@ func (em *ExchangeMiddleware) SendWithKey(msg Message, key string) error {
 
 // publish es el métod0 interno que realiza el publish a RabbitMQ.
 func (em *ExchangeMiddleware) publish(msg Message, key string) error {
+	em.sendMu.Lock()
+	defer em.sendMu.Unlock()
 	if err := em.ch.PublishWithContext(
 		context.Background(),
 		em.exchange,
