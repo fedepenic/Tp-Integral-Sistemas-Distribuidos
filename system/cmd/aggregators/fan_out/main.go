@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	svc := node.New("fan_out")
+	svc := node.NewExclusive("fan_out")
 	conn := svc.Conn()
 
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
