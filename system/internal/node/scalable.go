@@ -13,6 +13,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
+const chunkSize = 1000
+
 // Scalable is a horizontally-scalable pipeline node. It embeds Node and
 // extends it with peer-coordination for EOF propagation:
 //
@@ -42,11 +44,11 @@ type Scalable struct {
 	instanceTotal int
 
 	// in-flight tracking — guarded by mu
-	mu             sync.Mutex
-	cond           *sync.Cond
-	globalPending  int
-	clientPending  map[string]int
-	eofInFlight    map[string]bool // true while handleEOF is sending the downstream EOF
+	mu            sync.Mutex
+	cond          *sync.Cond
+	globalPending int
+	clientPending map[string]int
+	eofInFlight   map[string]bool // true while handleEOF is sending the downstream EOF
 
 	// processMu serializes every ProcessFunc call. fn runs from two goroutines —
 	// the data consumer (handleData) and the EOF/flush consumer (handleEOF) — and
@@ -248,24 +250,27 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			return
 		}
 
-		data, err := json.Marshal(result)
-		if err != nil {
-			log.Printf("[%s] marshal result: %v", s.name, err)
-			s.mu.Lock()
-			s.clientPending[batch.ClientID]--
-			s.cond.Broadcast()
-			s.mu.Unlock()
-			nack()
-			return
-		}
-		if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
-			log.Printf("[%s] send to output: %v", s.name, err)
-			s.mu.Lock()
-			s.clientPending[batch.ClientID]--
-			s.cond.Broadcast()
-			s.mu.Unlock()
-			nack()
-			return
+		chunks := splitBatch(result, chunkSize)
+		for _, chunk := range chunks {
+			data, err := json.Marshal(chunk)
+			if err != nil {
+				log.Printf("[%s] marshal chunk: %v", s.name, err)
+				s.mu.Lock()
+				s.clientPending[batch.ClientID]--
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				nack()
+				return
+			}
+			if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
+				log.Printf("[%s] send chunk to output: %v", s.name, err)
+				s.mu.Lock()
+				s.clientPending[batch.ClientID]--
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				nack()
+				return
+			}
 		}
 
 		s.mu.Lock()
@@ -389,6 +394,30 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 
 		ack()
 	}
+}
+
+func splitBatch(b protocol.Batch, size int) []protocol.Batch {
+	if len(b.Transactions) <= size {
+		return []protocol.Batch{b}
+	}
+
+	var chunks []protocol.Batch
+	txs := b.Transactions
+	for len(txs) > 0 {
+		end := size
+		if end > len(txs) {
+			end = len(txs)
+		}
+		chunk := protocol.Batch{
+			Type:         b.Type,
+			ClientID:     b.ClientID,
+			DataType:     b.DataType,
+			Transactions: txs[:end],
+		}
+		chunks = append(chunks, chunk)
+		txs = txs[end:]
+	}
+	return chunks
 }
 
 func mustInt(key string) int {
