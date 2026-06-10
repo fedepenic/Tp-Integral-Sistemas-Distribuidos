@@ -10,6 +10,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
+const chunkSize = 1000
+
 type fanOut struct {
 	// clientID → fromKey → entry
 	state            map[string]map[string]*fanOutEntry
@@ -76,35 +78,67 @@ func (f *fanOut) flush(clientID string) {
 				MiddleBank:    to.bank,
 				MiddleAccount: to.account,
 			}
-			p := worker.PartitionForKey(res.MiddleAccount, f.outputPartitions)
-			partitioned[p] = append(partitioned[p], res)
+
+			partition := worker.PartitionForKey(res.MiddleAccount, f.outputPartitions)
+
+			partitioned[partition] = append(partitioned[partition], res)
+
+			if len(partitioned[partition]) >= chunkSize {
+				if err := f.sendPartition(clientID, partitioned[partition], partition); err != nil {
+					log.Printf("[fan_out] send partition=%d: %v", partition, err)
+				}
+
+				partitioned[partition] = nil
+			}
 		}
 	}
 
 	log.Printf("[fan_out] flush client=%s emitting results=%d", clientID, total)
 	for partition, results := range partitioned {
-		routingKey := worker.RoutingKey(f.outputKeyPrefix, partition)
-		raw, err := json.Marshal(results)
-		if err != nil {
-			log.Printf("[fan_out] marshal results partition=%d: %v", partition, err)
+		if len(results) == 0 {
 			continue
 		}
-		out := protocol.Batch{
-			Type:     protocol.BatchTypeData,
-			ClientID: clientID,
-			DataType: "fanout_result",
-			Records:  raw,
-		}
-		data, err := json.Marshal(out)
-		if err != nil {
-			log.Printf("[fan_out] marshal batch partition=%d: %v", partition, err)
-			continue
-		}
-		if err := f.outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
-			log.Printf("[fan_out] send results partition=%d: %v", partition, err)
+
+		if err := f.sendPartition(clientID, results, partition); err != nil {
+			log.Printf("[fan_out] send partition=%d: %v", partition, err)
 		}
 	}
 
+	f.sendEOF(clientID)
+}
+
+func (f *fanOut) sendPartition(clientID string, results []fanOutResult, partition int) error {
+	routingKey := worker.RoutingKey(
+		f.outputKeyPrefix,
+		partition,
+	)
+
+	raw, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+
+	out := protocol.Batch{
+		Type:     protocol.BatchTypeData,
+		ClientID: clientID,
+		DataType: "fanout_result",
+		Records:  raw,
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+
+	return f.outputMW.SendWithKey(
+		middleware.Message{
+			Body: string(data),
+		},
+		routingKey,
+	)
+}
+
+func (f *fanOut) sendEOF(clientID string) {
 	eofBatch := protocol.Batch{
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
@@ -116,8 +150,17 @@ func (f *fanOut) flush(clientID string) {
 		return
 	}
 	for i := 0; i < f.outputPartitions; i++ {
-		routingKey := worker.RoutingKey(f.outputKeyPrefix, i)
-		if err := f.outputMW.SendWithKey(middleware.Message{Body: string(eofData)}, routingKey); err != nil {
+		routingKey := worker.RoutingKey(
+			f.outputKeyPrefix,
+			i,
+		)
+
+		if err := f.outputMW.SendWithKey(
+			middleware.Message{
+				Body: string(eofData),
+			},
+			routingKey,
+		); err != nil {
 			log.Printf("[fan_out] send EOF partition=%d: %v", i, err)
 		}
 	}
