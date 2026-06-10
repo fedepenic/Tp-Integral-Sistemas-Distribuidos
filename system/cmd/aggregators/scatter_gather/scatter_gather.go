@@ -67,6 +67,11 @@ func (sg *scatterGather) flush(clientID string) {
 		if count <= scatterThreshold {
 			continue
 		}
+		// Skip self-loops (source == destination): the scatter-gather pattern
+		// counts paths X -> Y -> Z where X and Z are distinct accounts.
+		if entry.fromBank == entry.toBank && entry.fromAccount == entry.toAccount {
+			continue
+		}
 		passed++
 		res := scatterGatherResult{
 			FromBank:    entry.fromBank,
