@@ -24,9 +24,12 @@ func main() {
 	}
 	defer inputMW.Close()
 
+	outputKeyPrefix := mustEnv("OUTPUT_KEY_PREFIX")
+	outputPartitions := mustEnvInt("OUTPUT_PARTITIONS")
+
 	outputMW, err := middleware.NewExchangeMiddleware(
 		mustEnv("OUTPUT_EXCHANGE"),
-		[]string{mustEnv("OUTPUT_KEY")},
+		[]string{},
 		conn,
 	)
 	if err != nil {
@@ -43,9 +46,9 @@ func main() {
 
 	svc := node.NewJoin("joiner_sg", foUpstream, fiUpstream, classify)
 
-	log.Printf("[joiner_sg] started fo_upstream=%d fi_upstream=%d", foUpstream, fiUpstream)
+	log.Printf("[joiner_sg] started fo_upstream=%d fi_upstream=%d output_partitions=%d", foUpstream, fiUpstream, outputPartitions)
 
-	svc.Run(inputMW, outputMW, newProcess(outputMW))
+	svc.Run(inputMW, outputMW, newProcess(outputMW, outputKeyPrefix, outputPartitions))
 }
 
 func mustEnv(key string) string {

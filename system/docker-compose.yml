@@ -120,101 +120,233 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  avg_per_payment_format_1:
+  fan_src_filter_1:
     build:
       context: .
       dockerfile: cmd/Dockerfile
       args:
-        SERVICE_PATH: aggregators/avg_per_payment_format
+        SERVICE_PATH: aggregators/fan_src_filter
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=2
-      - INPUT_KEY=avgfmt_0
-      - INPUT_EXCHANGE=usd_period1_for_q3
-      - OUTPUT_EXCHANGE=avg_per_format
-      - OUTPUT_KEY_PREFIX=joinerformat
-      - OUTPUT_PARTITIONS=2
+      - INPUT_KEY=q4sf_0
+      - INPUT_EXCHANGE=usd_period1_for_q4
+      - OUTPUT_FO_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_FO_KEY_PREFIX=fo
+      - OUTPUT_FO_PARTITIONS=2
+      - OUTPUT_FI_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_FI_KEY_PREFIX=fi
+      - OUTPUT_FI_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  avg_per_payment_format_2:
+  fan_src_filter_2:
     build:
       context: .
       dockerfile: cmd/Dockerfile
       args:
-        SERVICE_PATH: aggregators/avg_per_payment_format
+        SERVICE_PATH: aggregators/fan_src_filter
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - UPSTREAM_INSTANCES=2
-      - INPUT_KEY=avgfmt_1
-      - INPUT_EXCHANGE=usd_period1_for_q3
-      - OUTPUT_EXCHANGE=avg_per_format
-      - OUTPUT_KEY_PREFIX=joinerformat
-      - OUTPUT_PARTITIONS=2
+      - INPUT_KEY=q4sf_1
+      - INPUT_EXCHANGE=usd_period1_for_q4
+      - OUTPUT_FO_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_FO_KEY_PREFIX=fo
+      - OUTPUT_FO_PARTITIONS=2
+      - OUTPUT_FI_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_FI_KEY_PREFIX=fi
+      - OUTPUT_FI_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  join_q3_1:
+  fan_in_1:
     build:
       context: .
       dockerfile: cmd/Dockerfile
       args:
-        SERVICE_PATH: joiners/join_q3
+        SERVICE_PATH: aggregators/fan_in
     environment:
       - INSTANCE_ID=1
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - INPUT_KEY=joinerformat_0
-      - INPUT_QUEUE_NAME=join_q3_input_0
-      - AVG_INPUT_EXCHANGE=avg_per_format
-      - TXN_INPUT_EXCHANGE=usd_period2
-      - OUTPUT_QUEUE=q3_candidates
-      - AVG_UPSTREAM_INSTANCES=2
-      - TXN_UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=fi_0
+      - INPUT_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  join_q3_2:
+  fan_in_2:
     build:
       context: .
       dockerfile: cmd/Dockerfile
       args:
-        SERVICE_PATH: joiners/join_q3
+        SERVICE_PATH: aggregators/fan_in
     environment:
       - INSTANCE_ID=2
       - INSTANCE_TOTAL=2
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
-      - INPUT_KEY=joinerformat_1
-      - INPUT_QUEUE_NAME=join_q3_input_1
-      - AVG_INPUT_EXCHANGE=avg_per_format
-      - TXN_INPUT_EXCHANGE=usd_period2
-      - OUTPUT_QUEUE=q3_candidates
-      - AVG_UPSTREAM_INSTANCES=2
-      - TXN_UPSTREAM_INSTANCES=2
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=fi_1
+      - INPUT_EXCHANGE=usd_period1_for_q4_fi
+      - OUTPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
 
-  sink_3:
+  fan_out_1:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/fan_out
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=fo_0
+      - INPUT_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_EXCHANGE=scatter_gather_fo
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  fan_out_2:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/fan_out
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=fo_1
+      - INPUT_EXCHANGE=usd_period1_for_q4_fo
+      - OUTPUT_EXCHANGE=scatter_gather_fo
+      - OUTPUT_KEY_PREFIX=joinersg
+      - OUTPUT_PARTITIONS=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  scatter_gather_1:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/scatter_gather
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=sg_0
+      - INPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_QUEUE=q5_data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  scatter_gather_2:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: aggregators/scatter_gather
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - UPSTREAM_INSTANCES=2
+      - INPUT_KEY=sg_1
+      - INPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_QUEUE=q5_data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_sg_1:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: joiners/joiner_sg
+    environment:
+      - INSTANCE_ID=1
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_KEY=joinersg_0
+      - INPUT_QUEUE_NAME=joiner_sg_input_0
+      - FO_INPUT_EXCHANGE=scatter_gather_fo
+      - FI_INPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_KEY_PREFIX=sg
+      - FO_UPSTREAM_INSTANCES=2
+      - FI_UPSTREAM_INSTANCES=2
+      - OUTPUT_PARTITIONS=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  joiner_sg_2:
+    build:
+      context: .
+      dockerfile: cmd/Dockerfile
+      args:
+        SERVICE_PATH: joiners/joiner_sg
+    environment:
+      - INSTANCE_ID=2
+      - INSTANCE_TOTAL=2
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - INPUT_KEY=joinersg_1
+      - INPUT_QUEUE_NAME=joiner_sg_input_1
+      - FO_INPUT_EXCHANGE=scatter_gather_fo
+      - FI_INPUT_EXCHANGE=scatter_gather_fi
+      - OUTPUT_EXCHANGE=scatter_gather_data
+      - OUTPUT_KEY_PREFIX=sg
+      - FO_UPSTREAM_INSTANCES=2
+      - FI_UPSTREAM_INSTANCES=2
+      - OUTPUT_PARTITIONS=2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  sink_4:
     build:
       context: .
       dockerfile: cmd/Dockerfile
       args:
         SERVICE_PATH: sink
     environment:
-      - QUERY_ID=3
-      - INPUT_QUEUE=q3_data
+      - QUERY_ID=4
+      - INPUT_QUEUE=q5_data
       - OUTPUT_QUEUE=reports
       - UPSTREAM_INSTANCES=2
       - RABBITMQ_HOST=rabbitmq
@@ -271,50 +403,6 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  period2_filter_1:
-    build:
-      context: .
-      dockerfile: cmd/Dockerfile
-      args:
-        SERVICE_PATH: filter/period2_filter
-    environment:
-      - INSTANCE_ID=1
-      - INSTANCE_TOTAL=2
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
-      - INPUT_QUEUE_NAME=period2_filter_input
-      - INPUT_EXCHANGE=usd_filtered
-      - EOF_BROADCAST_EXCHANGE=period2_filter_eof
-      - OUTPUT_EXCHANGE=usd_period2
-      - OUTPUT_KEY_PREFIX=joinerformat
-      - OUTPUT_PARTITIONS=2
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  period2_filter_2:
-    build:
-      context: .
-      dockerfile: cmd/Dockerfile
-      args:
-        SERVICE_PATH: filter/period2_filter
-    environment:
-      - INSTANCE_ID=2
-      - INSTANCE_TOTAL=2
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
-      - INPUT_QUEUE_NAME=period2_filter_input
-      - INPUT_EXCHANGE=usd_filtered
-      - EOF_BROADCAST_EXCHANGE=period2_filter_eof
-      - OUTPUT_EXCHANGE=usd_period2
-      - OUTPUT_KEY_PREFIX=joinerformat
-      - OUTPUT_PARTITIONS=2
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
   period1_filter_1:
     build:
       context: .
@@ -332,13 +420,10 @@ services:
       - EOF_BROADCAST_EXCHANGE=period1_filter_eof
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
-      - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
-      - OUTPUT_Q4_FO_KEY_PREFIX=fo
-      - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
-      - OUTPUT_Q4_FI_KEY_PREFIX=fi
+      - OUTPUT_Q4_EXCHANGE=usd_period1_for_q4
+      - OUTPUT_Q4_KEY_PREFIX=q4sf
       - OUTPUT_Q3_PARTITIONS=2
-      - OUTPUT_Q4_FO_PARTITIONS=1
-      - OUTPUT_Q4_FI_PARTITIONS=1
+      - OUTPUT_Q4_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -360,49 +445,10 @@ services:
       - EOF_BROADCAST_EXCHANGE=period1_filter_eof
       - OUTPUT_Q3_EXCHANGE=usd_period1_for_q3
       - OUTPUT_Q3_KEY_PREFIX=avgfmt
-      - OUTPUT_Q4_FO_EXCHANGE=usd_period1_for_q4_fo
-      - OUTPUT_Q4_FO_KEY_PREFIX=fo
-      - OUTPUT_Q4_FI_EXCHANGE=usd_period1_for_q4_fi
-      - OUTPUT_Q4_FI_KEY_PREFIX=fi
+      - OUTPUT_Q4_EXCHANGE=usd_period1_for_q4
+      - OUTPUT_Q4_KEY_PREFIX=q4sf
       - OUTPUT_Q3_PARTITIONS=2
-      - OUTPUT_Q4_FO_PARTITIONS=1
-      - OUTPUT_Q4_FI_PARTITIONS=1
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  amt_avg_filter_1:
-    build:
-      context: .
-      dockerfile: cmd/Dockerfile
-      args:
-        SERVICE_PATH: filter/lower_than_avg_filter
-    environment:
-      - INSTANCE_ID=1
-      - INSTANCE_TOTAL=2
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
-      - INPUT_QUEUE=q3_candidates
-      - OUTPUT_QUEUE=q3_data
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-
-  amt_avg_filter_2:
-    build:
-      context: .
-      dockerfile: cmd/Dockerfile
-      args:
-        SERVICE_PATH: filter/lower_than_avg_filter
-    environment:
-      - INSTANCE_ID=2
-      - INSTANCE_TOTAL=2
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_PORT=5672
-      - UPSTREAM_INSTANCES=2
-      - INPUT_QUEUE=q3_candidates
-      - OUTPUT_QUEUE=q3_data
+      - OUTPUT_Q4_PARTITIONS=2
     depends_on:
       rabbitmq:
         condition: service_healthy

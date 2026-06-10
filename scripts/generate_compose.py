@@ -170,9 +170,9 @@ AGGREGATORS = [
         "N_SG",
         "N_JOINER_SG",
         {
-            "INPUT_EXCHANGE": "scatter_gather_data",
-            "INPUT_KEY":      "scatter_gather",
-            "OUTPUT_QUEUE":   "q5_data",
+            "INPUT_EXCHANGE":   "scatter_gather_data",
+            "INPUT_KEY_PREFIX": "sg",
+            "OUTPUT_QUEUE":     "q5_data",
         },
     ),
 ]
@@ -210,7 +210,7 @@ JOINERS = [
             "FO_INPUT_EXCHANGE":       "scatter_gather_fo",
             "FI_INPUT_EXCHANGE":       "scatter_gather_fi",
             "OUTPUT_EXCHANGE":         "scatter_gather_data",
-            "OUTPUT_KEY":              "scatter_gather",
+            "OUTPUT_KEY_PREFIX":       "sg",
         },
     ),
 ]
@@ -370,6 +370,7 @@ def joiners_extra_env(name: str, env: dict[str, str]) -> dict[str, str]:
         return {
             "FO_UPSTREAM_INSTANCES": env.get("N_FO", "1"),
             "FI_UPSTREAM_INSTANCES": env.get("N_FI", "1"),
+            "OUTPUT_PARTITIONS":     env.get("N_SG", "1"),
         }
     return {}
 

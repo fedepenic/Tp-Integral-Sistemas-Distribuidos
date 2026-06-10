@@ -8,11 +8,12 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 const chunkSize = 10_000
 
-func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
+func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPartitions int) node.ProcessFunc {
 	var mu sync.Mutex
 	states := make(map[string]sgState)
 
@@ -21,7 +22,18 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 			mu.Lock()
 			delete(states, batch.ClientID)
 			mu.Unlock()
-			return protocol.Batch{}, false
+			for i := 0; i < outputPartitions; i++ {
+				routingKey := worker.RoutingKey(outputKeyPrefix, i)
+				data, err := json.Marshal(batch)
+				if err != nil {
+					log.Printf("[joiner_sg] marshal EOF partition=%d: %v", i, err)
+					continue
+				}
+				if err := outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
+					log.Printf("[joiner_sg] send EOF partition=%d: %v", i, err)
+				}
+			}
+			return batch, true
 		}
 
 		mu.Lock()
@@ -71,30 +83,40 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 		states[batch.ClientID] = state
 
 		log.Printf("[joiner_sg] produced items=%d client=%s", len(items), batch.ClientID)
-		sendChunks(outputMW, batch.ClientID, items)
+		sendChunks(outputMW, batch.ClientID, items, outputKeyPrefix, outputPartitions)
 		return protocol.Batch{}, false
 	}
 }
 
-func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem) {
-	for len(items) > 0 {
-		end := chunkSize
-		if end > len(items) {
-			end = len(items)
-		}
-		out := protocol.Batch{
-			Type:               protocol.BatchTypeScatterGather,
-			ClientID:           clientID,
-			ScatterGatherItems: items[:end],
-		}
-		items = items[end:]
-		data, err := json.Marshal(out)
-		if err != nil {
-			log.Printf("[joiner_sg] marshal chunk: %v", err)
-			continue
-		}
-		if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
-			log.Printf("[joiner_sg] send chunk: %v", err)
+func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem, keyPrefix string, partitions int) {
+	grouped := make(map[int][]protocol.ScatterGatherItem)
+	for _, item := range items {
+		key := item.FromBank + item.FromAccount + item.ToBank + item.ToAccount
+		p := worker.PartitionForKey(key, partitions)
+		grouped[p] = append(grouped[p], item)
+	}
+
+	for partition, partItems := range grouped {
+		routingKey := worker.RoutingKey(keyPrefix, partition)
+		for len(partItems) > 0 {
+			end := chunkSize
+			if end > len(partItems) {
+				end = len(partItems)
+			}
+			out := protocol.Batch{
+				Type:               protocol.BatchTypeScatterGather,
+				ClientID:           clientID,
+				ScatterGatherItems: partItems[:end],
+			}
+			partItems = partItems[end:]
+			data, err := json.Marshal(out)
+			if err != nil {
+				log.Printf("[joiner_sg] marshal chunk partition=%d: %v", partition, err)
+				continue
+			}
+			if err := outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
+				log.Printf("[joiner_sg] send chunk partition=%d: %v", partition, err)
+			}
 		}
 	}
 }
