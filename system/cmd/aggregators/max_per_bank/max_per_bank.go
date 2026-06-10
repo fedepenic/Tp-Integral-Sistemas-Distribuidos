@@ -10,6 +10,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
+const chunkSize = 1000
+
 type maxPerBank struct {
 	// clientID -> bankID -> state
 	state            map[string]map[string]maxPerBankState
@@ -30,7 +32,6 @@ func newMaxPerBank(outputMW middleware.Middleware) *maxPerBank {
 func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.Type == protocol.BatchTypeEOF {
 		m.flush(batch.ClientID)
-		// Return the EOF batch so Scalable knows we handled forwarding ourselves.
 		return batch, true
 	}
 	banks, ok := m.state[batch.ClientID]
@@ -57,46 +58,92 @@ func (m *maxPerBank) flush(clientID string) {
 		if !ok {
 			continue
 		}
-		p := worker.PartitionForKey(result.BankID, m.outputPartitions)
-		partitioned[p] = append(partitioned[p], result)
+
+		partition := worker.PartitionForKey(result.BankID, m.outputPartitions)
+
+		partitioned[partition] = append(
+			partitioned[partition],
+			result,
+		)
+
+		if len(partitioned[partition]) >= chunkSize {
+			if err := m.sendPartition(clientID, partitioned[partition], partition); err != nil {
+				log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
+			}
+
+			partitioned[partition] = nil
+		}
 	}
 
 	for partition, results := range partitioned {
-		routingKey := worker.RoutingKey(m.outputKeyPrefix, partition)
-		raw, err := json.Marshal(results)
-		if err != nil {
-			log.Printf("[max_per_bank] marshal results partition=%d: %v", partition, err)
+		if len(results) == 0 {
 			continue
 		}
-		out := protocol.Batch{
-			Type:     protocol.BatchTypeData,
-			ClientID: clientID,
-			DataType: "max_per_bank",
-			Records:  raw,
-		}
-		data, err := json.Marshal(out)
-		if err != nil {
-			log.Printf("[max_per_bank] marshal batch partition=%d: %v", partition, err)
-			continue
-		}
-		if err := m.outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
-			log.Printf("[max_per_bank] send results partition=%d: %v", partition, err)
+
+		if err := m.sendPartition(clientID, results, partition); err != nil {
+			log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
 		}
 	}
 
+	m.sendEOF(clientID)
+}
+
+func (m *maxPerBank) sendPartition(clientID string, results []maxPerBankResult, partition int) error {
+	routingKey := worker.RoutingKey(
+		m.outputKeyPrefix,
+		partition,
+	)
+
+	raw, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+
+	out := protocol.Batch{
+		Type:     protocol.BatchTypeData,
+		ClientID: clientID,
+		DataType: "max_per_bank",
+		Records:  raw,
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+
+	return m.outputMW.SendWithKey(
+		middleware.Message{
+			Body: string(data),
+		},
+		routingKey,
+	)
+}
+
+func (m *maxPerBank) sendEOF(clientID string) {
 	eofBatch := protocol.Batch{
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
 		DataType: "max_per_bank",
 	}
+
 	eofData, err := json.Marshal(eofBatch)
 	if err != nil {
 		log.Printf("[max_per_bank] marshal EOF: %v", err)
 		return
 	}
+
 	for i := 0; i < m.outputPartitions; i++ {
-		routingKey := worker.RoutingKey(m.outputKeyPrefix, i)
-		if err := m.outputMW.SendWithKey(middleware.Message{Body: string(eofData)}, routingKey); err != nil {
+		routingKey := worker.RoutingKey(
+			m.outputKeyPrefix,
+			i,
+		)
+
+		if err := m.outputMW.SendWithKey(
+			middleware.Message{
+				Body: string(eofData),
+			},
+			routingKey,
+		); err != nil {
 			log.Printf("[max_per_bank] send EOF partition=%d: %v", i, err)
 		}
 	}
@@ -112,6 +159,7 @@ func accumulate(state maxPerBankState, tx protocol.Transaction) maxPerBankState 
 			hasValue:      true,
 		}
 	}
+
 	return state
 }
 
