@@ -15,7 +15,6 @@ import (
 func newProcess(outputMW middleware.Middleware, keyPrefix string, partitions int) node.ProcessFunc {
 	start, _ := time.Parse(dateLayout, periodStart)
 	end, _ := time.Parse(dateLayout, periodEnd)
-	end = end.Add(24 * time.Hour)
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
