@@ -62,6 +62,7 @@ run-system: stop-system
 
 stop-system:
 	docker-compose -f system/docker-compose.yml down -v
+	docker image prune -f
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true

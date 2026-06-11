@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -12,8 +13,9 @@ func main() {
 	svc := node.New("currency_converter")
 	conn := svc.Conn()
 
-	inputQueue  := config.EnvOrDefault("INPUT_QUEUE", "wireach_txn")
-	outputQueue := config.EnvOrDefault("OUTPUT_QUEUE", "converted_usd")
+	inputQueue       := config.EnvOrDefault("INPUT_QUEUE", "wireach_txn")
+	outputQueue      := config.EnvOrDefault("OUTPUT_QUEUE", "converted_usd")
+	useHardcoded     := strings.EqualFold(config.EnvOrDefault("USE_HARDCODED_RATES", "true"), "true")
 
 	inputMW, err := middleware.CreateQueueMiddleware(inputQueue, conn)
 	if err != nil {
@@ -27,5 +29,5 @@ func main() {
 	}
 	defer outputMW.Close()
 
-	svc.Run(inputMW, outputMW, newProcess())
+	svc.Run(inputMW, outputMW, newProcess(useHardcoded))
 }
