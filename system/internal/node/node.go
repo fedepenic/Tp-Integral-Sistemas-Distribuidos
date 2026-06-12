@@ -2,9 +2,12 @@ package node
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -42,6 +45,9 @@ func NewNode() *Node {
 }
 
 func newNode() Node {
+	registerWithWatcher()
+	startHealthServer()
+
 	upstream := 1
 	if v := os.Getenv("UPSTREAM_INSTANCES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -52,6 +58,65 @@ func newNode() Node {
 		conn:          config.ConnSettings(),
 		upstreamCount: upstream,
 	}
+}
+
+// registerWithWatcher connects to the watcher's registration port and announces
+// this service. Retries until the connection succeeds.
+func registerWithWatcher() {
+	host := os.Getenv("WATCHER_HOST")
+	if host == "" {
+		host = "watcher"
+	}
+	port := os.Getenv("WATCHER_PORT")
+	if port == "" {
+		port = "8888"
+	}
+
+	name, err := os.Hostname()
+	if err != nil {
+		name = "unknown"
+	}
+
+	addr := net.JoinHostPort(host, port)
+	log.Printf("[node] registering with watcher at %s (name=%s)...", addr, name)
+
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+		if err != nil {
+			log.Printf("[node] watcher not ready yet, retrying: %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		fmt.Fprintf(conn, "%s\n", name)
+		conn.Close()
+		log.Printf("[node] registered with watcher as %q", name)
+		return
+	}
+}
+
+// startHealthServer opens a TCP listener on HEALTH_PORT (if set). The watcher
+// connects to this port to check liveness — no Docker API involved.
+func startHealthServer() {
+	port := os.Getenv("HEALTH_PORT")
+	if port == "" {
+		return
+	}
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Printf("[node] health server could not listen on :%s: %v", port, err)
+		return
+	}
+	log.Printf("[node] health server listening on :%s", port)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("[node] health server accept error: %v", err)
+				return
+			}
+			conn.Close()
+		}
+	}()
 }
 
 // Conn returns the RabbitMQ connection settings.
