@@ -62,11 +62,15 @@ run-system: stop-system
 
 stop-system:
 	docker-compose -f system/docker-compose.yml down -v
+
+prune:
 	docker image prune -f
 
 down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
 
-.PHONY: 1 2 3 4 5
-1 2 3 4 5:
+kill:
+	docker-compose -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
+
+%:
 	@:
