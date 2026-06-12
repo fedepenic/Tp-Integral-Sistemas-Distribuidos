@@ -389,6 +389,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
 
     # RabbitMQ — single instance, must be healthy before gateway starts
     lines.append(f"  rabbitmq:")
+    lines.append(f"    image: rabbitmq")
     lines.append(f"    build:")
     lines.append(f"      context: .")
     lines.append(f"      dockerfile: cmd/rabbitmq/Dockerfile")
@@ -407,6 +408,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
 
     # Gateway — single instance, no scaling
     lines.append(f"  gateway:")
+    lines.append(f"    image: gateway")
     lines.append(f"    build:")
     lines.append(f"      context: .")
     lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -433,6 +435,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     accounts_file = env.get("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
     for i in range(1, n_clients + 1):
         lines.append(f"  client_{i}:")
+        lines.append(f"    image: client_{i}")
         lines.append(f"    build:")
         lines.append(f"      context: .")
         lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -463,6 +466,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else None
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
+            lines.append(f"    image: {name}_{i}")
             lines.append(f"    build:")
             lines.append(f"      context: .")
             lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -493,6 +497,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         input_prefix = extra_env.get("INPUT_KEY_PREFIX", "")
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
+            lines.append(f"    image: {name}_{i}")
             lines.append(f"    build:")
             lines.append(f"      context: .")
             lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -527,6 +532,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         eof_prefix = extra_env.get("EOF_CONTROL_KEY_PREFIX", "")
         for i in range(1, count + 1):
             lines.append(f"  {name}_{i}:")
+            lines.append(f"    image: {name}_{i}")
             lines.append(f"    build:")
             lines.append(f"      context: .")
             lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -558,6 +564,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  {svc_name}:")
+        lines.append(f"    image: {svc_name}")
         lines.append(f"    build:")
         lines.append(f"      context: .")
         lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -580,6 +587,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         lines.append(f"  sink_{query_id}:")
+        lines.append(f"    image: sink_{query_id}")
         lines.append(f"    build:")
         lines.append(f"      context: .")
         lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -605,6 +613,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         upstream = get_instance_count(env, upstream_env_var, 1) if upstream_env_var else 1
         for i in range(1, count + 1):
             lines.append(f"  {svc_name}_{i}:")
+            lines.append(f"    image: {svc_name}_{i}")
             lines.append(f"    build:")
             lines.append(f"      context: .")
             lines.append(f"      dockerfile: cmd/Dockerfile")
