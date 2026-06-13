@@ -72,5 +72,8 @@ down:
 kill:
 	docker-compose -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
 
+chaos:
+	set -a && . ./.env && $(PYTHON) scripts/chaos.py
+
 %:
 	@:
