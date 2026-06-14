@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"os"
 	"strconv"
 
@@ -42,6 +43,8 @@ func NewNode() *Node {
 }
 
 func newNode() Node {
+	startHealthServer()
+
 	upstream := 1
 	if v := os.Getenv("UPSTREAM_INSTANCES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -52,6 +55,31 @@ func newNode() Node {
 		conn:          config.ConnSettings(),
 		upstreamCount: upstream,
 	}
+}
+
+// startHealthServer opens a TCP listener on HEALTH_PORT (if set). The watcher
+// connects to this port to check liveness — no Docker API involved.
+func startHealthServer() {
+	port := os.Getenv("HEALTH_PORT")
+	if port == "" {
+		return
+	}
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Printf("[node] health server could not listen on :%s: %v", port, err)
+		return
+	}
+	log.Printf("[node] health server listening on :%s", port)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("[node] health server accept error: %v", err)
+				return
+			}
+			conn.Close()
+		}
+	}()
 }
 
 // Conn returns the RabbitMQ connection settings.

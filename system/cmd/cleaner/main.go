@@ -7,6 +7,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
 func main() {
@@ -38,6 +39,17 @@ func main() {
 		log.Fatalf("[cleaner] connect to accounts exchange: %v", err)
 	}
 	defer accountsMW.Close()
+
+	// Pre-declare join_q2's per-partition input queues (and their bindings) so
+	// the accounts we publish are never dropped as unroutable when join_q2 has
+	// not bound yet. Queue name == routing key, matching what join_q2 consumes.
+	// This also covers the max_per_bank results routed to the same exchange/keys.
+	for p := 0; p < accountsPartitions; p++ {
+		key := worker.RoutingKey(accountsKeyPrefix, p)
+		if err := middleware.DeclareBoundQueue(key, accountsExchange, key, conn); err != nil {
+			log.Fatalf("[cleaner] pre-declare join queue %s: %v", key, err)
+		}
+	}
 
 	skipCleaning := strings.EqualFold(config.EnvOrDefault("SKIP_CLEANING", "false"), "true")
 

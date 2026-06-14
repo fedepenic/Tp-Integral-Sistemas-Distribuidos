@@ -13,9 +13,15 @@ import (
 func main() {
 	conn := connSettings()
 
-	inputMW, err := middleware.NewExchangeMiddleware(
+	// Named, durable queue (name == routing key) bound to the input exchange.
+	// Producers (cleaner, max_per_bank) pre-declare these same queues before
+	// publishing, so accounts/maxes are buffered here even if this joiner starts
+	// late — instead of being dropped as unroutable on the direct exchange.
+	inputKey := mustEnv("INPUT_KEY")
+	inputMW, err := middleware.NewSharedQueueMiddleware(
+		inputKey,
 		mustEnv("INPUT_EXCHANGE"),
-		[]string{mustEnv("INPUT_KEY")},
+		[]string{inputKey},
 		conn,
 	)
 	if err != nil {
