@@ -394,10 +394,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     watcher_targets: list[tuple[str, int]] = [
         ("rabbitmq", 5672),
     ]
-    # n_registering counts Go services that call registration.Register().
-    # rabbitmq cannot register (third-party); clients and gateway are excluded.
-    # All node-based workers register automatically via newNode().
-    n_registering = 0
 
     # RabbitMQ — single instance, must be healthy before gateway starts
     lines.append(f"  rabbitmq:")
@@ -479,7 +475,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         for i in range(1, count + 1):
             svc_instance = f"{name}_{i}"
             watcher_targets.append((svc_instance, HEALTH_PORT))
-            n_registering += 1
             lines.append(f"  {svc_instance}:")
             lines.append(f"    image: {svc_instance}")
             lines.append(f"    build:")
@@ -516,7 +511,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         for i in range(1, count + 1):
             svc_instance = f"{name}_{i}"
             watcher_targets.append((svc_instance, HEALTH_PORT))
-            n_registering += 1
             lines.append(f"  {svc_instance}:")
             lines.append(f"    image: {svc_instance}")
             lines.append(f"    build:")
@@ -557,7 +551,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         for i in range(1, count + 1):
             svc_instance = f"{name}_{i}"
             watcher_targets.append((svc_instance, HEALTH_PORT))
-            n_registering += 1
             lines.append(f"  {svc_instance}:")
             lines.append(f"    image: {svc_instance}")
             lines.append(f"    build:")
@@ -594,7 +587,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         watcher_targets.append((svc_name, HEALTH_PORT))
-        n_registering += 1
         lines.append(f"  {svc_name}:")
         lines.append(f"    image: {svc_name}")
         lines.append(f"    build:")
@@ -622,7 +614,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             continue
         upstream = get_instance_count(env, upstream_env_var, 1)
         watcher_targets.append((f"sink_{query_id}", HEALTH_PORT))
-        n_registering += 1
         lines.append(f"  sink_{query_id}:")
         lines.append(f"    image: sink_{query_id}")
         lines.append(f"    build:")
@@ -654,7 +645,6 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         for i in range(1, count + 1):
             svc_instance = f"{svc_name}_{i}"
             watcher_targets.append((svc_instance, HEALTH_PORT))
-            n_registering += 1
             lines.append(f"  {svc_instance}:")
             lines.append(f"    image: {svc_instance}")
             lines.append(f"    build:")
@@ -693,7 +683,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append(f"      - COMPOSE_PROJECT=system")
     lines.append(f"      - WATCH_INTERVAL=15s")
     lines.append(f"      - PING_TIMEOUT=3s")
-    lines.append(f"      - N_SERVICES={n_registering}")
+    lines.append(f"      - STARTUP_DELAY=30s")
     lines.append(f"      - SERVICES={services_str}")
     lines.append(f"    volumes:")
     lines.append(f"      - /var/run/docker.sock:/var/run/docker.sock")

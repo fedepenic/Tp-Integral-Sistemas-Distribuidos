@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,15 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
-const (
-	dockerSocket        = "/var/run/docker.sock"
-	registrationPort    = "8888"
-)
+const dockerSocket = "/var/run/docker.sock"
 
 // ServiceTarget is a service the watcher monitors.
 type ServiceTarget struct {
@@ -50,18 +45,6 @@ func parseInterval(s string) time.Duration {
 	return d
 }
 
-func mustInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
-		log.Fatalf("[watcher] %s must be a non-negative integer, got %q", key, v)
-	}
-	return n
-}
-
 // parseServices parses SERVICES env var entries in the form "name:port" or
 // "name:host:port". Example: "rabbitmq:5672,gateway:8080,cleaner_1:9999"
 func parseServices(s string) []ServiceTarget {
@@ -82,50 +65,6 @@ func parseServices(s string) []ServiceTarget {
 		}
 	}
 	return targets
-}
-
-// waitForRegistrations blocks until n services have connected to the
-// registration port and announced themselves. This replaces any fixed startup
-// delay: monitoring only begins once every expected service is known to be up.
-func waitForRegistrations(n int) {
-	if n == 0 {
-		log.Printf("[watcher] N_SERVICES=0, skipping registration wait")
-		return
-	}
-
-	ln, err := net.Listen("tcp", ":"+registrationPort)
-	if err != nil {
-		log.Fatalf("[watcher] could not open registration port :%s: %v", registrationPort, err)
-	}
-	defer ln.Close()
-
-	log.Printf("[watcher] registration server listening on :%s, waiting for %d service(s)...", registrationPort, n)
-
-	registered := make(map[string]bool)
-	for len(registered) < n {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Printf("[watcher] registration accept error: %v", err)
-			continue
-		}
-
-		name, err := bufio.NewReader(conn).ReadString('\n')
-		conn.Close()
-		name = strings.TrimSpace(name)
-		if err != nil && name == "" {
-			log.Printf("[watcher] could not read registration name: %v", err)
-			continue
-		}
-
-		if !registered[name] {
-			registered[name] = true
-			log.Printf("[watcher] REGISTERED %q (%d/%d)", name, len(registered), n)
-		} else {
-			log.Printf("[watcher] duplicate registration from %q (ignored)", name)
-		}
-	}
-
-	log.Printf("[watcher] all %d service(s) registered — starting health monitoring", n)
 }
 
 // newDockerClient returns an HTTP client that talks to the Docker daemon via
@@ -242,18 +181,18 @@ func checkAll(dockerClient *http.Client, project string, services []ServiceTarge
 }
 
 func main() {
-	project     := envOrDefault("COMPOSE_PROJECT", "system")
-	interval    := parseInterval(envOrDefault("WATCH_INTERVAL", "15s"))
-	pingTimeout := parseInterval(envOrDefault("PING_TIMEOUT", "3s"))
-	nServices   := mustInt("N_SERVICES", 0)
-	servicesRaw := envOrDefault("SERVICES", "")
+	project      := envOrDefault("COMPOSE_PROJECT", "system")
+	interval     := parseInterval(envOrDefault("WATCH_INTERVAL", "15s"))
+	pingTimeout  := parseInterval(envOrDefault("PING_TIMEOUT", "3s"))
+	startupDelay := parseInterval(envOrDefault("STARTUP_DELAY", "30s"))
+	servicesRaw  := envOrDefault("SERVICES", "")
 
 	log.Printf("[watcher] ============================================================")
 	log.Printf("[watcher] watcher starting")
 	log.Printf("[watcher] compose project  : %s", project)
 	log.Printf("[watcher] check interval   : %s", interval)
 	log.Printf("[watcher] ping timeout     : %s", pingTimeout)
-	log.Printf("[watcher] expected services: %d", nServices)
+	log.Printf("[watcher] startup delay    : %s", startupDelay)
 	log.Printf("[watcher] ============================================================")
 
 	if servicesRaw == "" {
@@ -270,9 +209,11 @@ func main() {
 		log.Printf("[watcher]   - %s @ %s:%s", svc.name, svc.host, svc.port)
 	}
 
-	// Block here until every expected service has registered.
-	// This replaces any fixed startup delay.
-	waitForRegistrations(nServices)
+	// Give every service a fixed window to come up before monitoring begins.
+	// Nodes no longer register with the watcher; they just expose a health port.
+	log.Printf("[watcher] waiting %s before starting health monitoring...", startupDelay)
+	time.Sleep(startupDelay)
+	log.Printf("[watcher] startup delay elapsed — starting health monitoring")
 
 	dockerClient := newDockerClient()
 

@@ -123,6 +123,21 @@ func NewSharedQueueMultiExchangeMiddleware(queueName string, exchanges []string,
 	}, nil
 }
 
+// DeclareBoundQueue declares a durable, non-exclusive, non-auto-delete queue
+// bound to a direct exchange with the given key, then releases the connection.
+// Producers call this before publishing so the destination queue exists and is
+// bound even if the consumer has not started yet — otherwise messages routed to
+// an unbound key on a direct exchange are silently dropped as unroutable. The
+// queue survives the connection close because it is durable and not auto-delete,
+// so the consumer later attaches to the same queue and drains what buffered.
+func DeclareBoundQueue(queueName, exchange, key string, connectionSettings ConnSettings) error {
+	mw, err := NewSharedQueueMiddleware(queueName, exchange, []string{key}, connectionSettings)
+	if err != nil {
+		return err
+	}
+	return mw.Close()
+}
+
 func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func(), nack func())) error {
 	if err := qm.ch.Qos(1, 0, false); err != nil {
 		return fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
