@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -43,7 +44,9 @@ func NewNode() *Node {
 }
 
 func newNode() Node {
-	startHealthServer()
+	if watcherEnabled() {
+		startHealthServer()
+	}
 
 	upstream := 1
 	if v := os.Getenv("UPSTREAM_INSTANCES"); v != "" {
@@ -54,6 +57,15 @@ func newNode() Node {
 	return Node{
 		conn:          config.ConnSettings(),
 		upstreamCount: upstream,
+	}
+}
+
+func watcherEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_WATCHER"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

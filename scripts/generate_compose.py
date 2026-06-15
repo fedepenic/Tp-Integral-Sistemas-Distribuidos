@@ -387,8 +387,28 @@ def active_for(name: str, membership: dict[str, set[str]], active_queries: set[s
 HEALTH_PORT = 9999
 
 
+def get_bool_env(env: dict[str, str], key: str, default: bool = False) -> bool:
+    value = env.get(key)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def append_watcher_health_env(lines: list[str], watcher_enabled: bool) -> None:
+    if watcher_enabled:
+        lines.append(f"      - ENABLE_WATCHER=true")
+        lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+
+
+def append_watcher_dependency(lines: list[str], watcher_enabled: bool) -> None:
+    if watcher_enabled:
+        lines.append(f"      watcher:")
+        lines.append(f"        condition: service_started")
+
+
 def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines = ["services:"]
+    watcher_enabled = get_bool_env(env, "ENABLE_WATCHER", True)
     # Collect (service_name, port) for every long-running service so the watcher
     # can be configured with the full list at the end of this function.
     watcher_targets: list[tuple[str, int]] = [
@@ -491,12 +511,11 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             env_map.update(services_extra_env(name, env, active_queries))
             for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
-            lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+            append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
-            lines.append(f"      watcher:")
-            lines.append(f"        condition: service_started")
+            append_watcher_dependency(lines, watcher_enabled)
             lines.append("")
 
     # Aggregators
@@ -530,12 +549,11 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k == "INPUT_KEY_PREFIX":
                     continue
                 lines.append(f"      - {k}={v}")
-            lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+            append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
-            lines.append(f"      watcher:")
-            lines.append(f"        condition: service_started")
+            append_watcher_dependency(lines, watcher_enabled)
             lines.append("")
 
     # Joiners
@@ -573,12 +591,11 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k in ("INPUT_KEY_PREFIX", "INPUT_QUEUE_NAME_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
                     continue
                 lines.append(f"      - {k}={v}")
-            lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+            append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
-            lines.append(f"      watcher:")
-            lines.append(f"        condition: service_started")
+            append_watcher_dependency(lines, watcher_enabled)
             lines.append("")
 
     # Counters — single instance, aggregate transactions into a count before the sink
@@ -600,12 +617,11 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
-        lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+        append_watcher_health_env(lines, watcher_enabled)
         lines.append(f"    depends_on:")
         lines.append(f"      rabbitmq:")
         lines.append(f"        condition: service_healthy")
-        lines.append(f"      watcher:")
-        lines.append(f"        condition: service_started")
+        append_watcher_dependency(lines, watcher_enabled)
         lines.append("")
 
     # Sinks — always single-instance, one per query
@@ -628,12 +644,11 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
-        lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+        append_watcher_health_env(lines, watcher_enabled)
         lines.append(f"    depends_on:")
         lines.append(f"      rabbitmq:")
         lines.append(f"        condition: service_healthy")
-        lines.append(f"      watcher:")
-        lines.append(f"        condition: service_started")
+        append_watcher_dependency(lines, watcher_enabled)
         lines.append("")
 
     # Named filters — instance count driven by .env, with specific build args and env vars
@@ -662,35 +677,35 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             nf_env.update(named_filters_extra_env(svc_name, env))
             for k, v in nf_env.items():
                 lines.append(f"      - {k}={v}")
-            lines.append(f"      - HEALTH_PORT={HEALTH_PORT}")
+            append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
-            lines.append(f"      watcher:")
-            lines.append(f"        condition: service_started")
+            append_watcher_dependency(lines, watcher_enabled)
             lines.append("")
 
     # Watcher — single instance, monitors all long-running services via TCP ping
-    services_str = ",".join(f"{name}:{port}" for name, port in watcher_targets)
-    lines.append(f"  watcher:")
-    lines.append(f"    image: watcher")
-    lines.append(f"    build:")
-    lines.append(f"      context: .")
-    lines.append(f"      dockerfile: cmd/Dockerfile")
-    lines.append(f"      args:")
-    lines.append(f"        SERVICE_PATH: watcher")
-    lines.append(f"    environment:")
-    lines.append(f"      - COMPOSE_PROJECT=system")
-    lines.append(f"      - WATCH_INTERVAL=15s")
-    lines.append(f"      - PING_TIMEOUT=3s")
-    lines.append(f"      - STARTUP_DELAY=30s")
-    lines.append(f"      - SERVICES={services_str}")
-    lines.append(f"    volumes:")
-    lines.append(f"      - /var/run/docker.sock:/var/run/docker.sock")
-    lines.append(f"    depends_on:")
-    lines.append(f"      rabbitmq:")
-    lines.append(f"        condition: service_healthy")
-    lines.append("")
+    if watcher_enabled:
+        services_str = ",".join(f"{name}:{port}" for name, port in watcher_targets)
+        lines.append(f"  watcher:")
+        lines.append(f"    image: watcher")
+        lines.append(f"    build:")
+        lines.append(f"      context: .")
+        lines.append(f"      dockerfile: cmd/Dockerfile")
+        lines.append(f"      args:")
+        lines.append(f"        SERVICE_PATH: watcher")
+        lines.append(f"    environment:")
+        lines.append(f"      - COMPOSE_PROJECT=system")
+        lines.append(f"      - WATCH_INTERVAL=15s")
+        lines.append(f"      - PING_TIMEOUT=3s")
+        lines.append(f"      - STARTUP_DELAY=30s")
+        lines.append(f"      - SERVICES={services_str}")
+        lines.append(f"    volumes:")
+        lines.append(f"      - /var/run/docker.sock:/var/run/docker.sock")
+        lines.append(f"    depends_on:")
+        lines.append(f"      rabbitmq:")
+        lines.append(f"        condition: service_healthy")
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 
