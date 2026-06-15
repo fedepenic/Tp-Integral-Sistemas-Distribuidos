@@ -4,6 +4,8 @@ Kills a random service from the system's docker-compose on a timer.
 
 Configuration via environment variables (or .env via make):
     CHAOS_INTERVAL   Seconds between kills (default: 15)
+    CHAOS_SERVICES_PER_INTERVAL
+                     Number of random services to kill per interval (default: 1)
     CHAOS_EXCLUDE    Comma-separated services to never kill (default: rabbitmq)
 
 Usage:
@@ -49,8 +51,13 @@ def kill_service(service: str) -> None:
 
 def main() -> None:
     interval = float(os.environ.get("CHAOS_INTERVAL", 15))
+    services_per_interval = int(os.environ.get("CHAOS_SERVICES_PER_INTERVAL", 1))
     exclude_csv = os.environ.get("CHAOS_EXCLUDE", "")
     excluded = {s.strip() for s in exclude_csv.split(",") if s.strip()}
+
+    if services_per_interval < 1:
+        print("ERROR: CHAOS_SERVICES_PER_INTERVAL must be at least 1.")
+        sys.exit(1)
 
     if not COMPOSE_FILE.exists():
         print(f"ERROR: {COMPOSE_FILE} not found. Run 'make generate-compose' first.")
@@ -63,7 +70,7 @@ def main() -> None:
         print("ERROR: No services available to kill (check CHAOS_EXCLUDE).")
         sys.exit(1)
 
-    print(f"Chaos mode ON — interval: {interval}s")
+    print(f"Chaos mode ON — interval: {interval}s, services per interval: {services_per_interval}")
     print(f"Services pool: {', '.join(services)}")
     if excluded:
         print(f"Excluded: {', '.join(sorted(excluded))}")
@@ -71,12 +78,13 @@ def main() -> None:
 
     try:
         while True:
-            target = random.choice(services)
+            targets = random.sample(services, min(services_per_interval, len(services)))
             ts = datetime.now().strftime("%H:%M:%S")
-            print(f"[{ts}] Killing: {target}")
-            kill_service(target)
+            print(f"[{ts}] Killing: {', '.join(targets)}")
+            for target in targets:
+                kill_service(target)
             ts = datetime.now().strftime("%H:%M:%S")
-            print(f"[{ts}] Done. Next kill in {interval}s...\n")
+            print(f"[{ts}] Done. Next kill round in {interval}s...\n")
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\nChaos stopped.")
