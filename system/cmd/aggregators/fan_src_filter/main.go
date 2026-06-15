@@ -12,15 +12,15 @@ func main() {
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
-	outFOMW := config.Exchange("OUTPUT_FO_EXCHANGE", []string{}, conn)
+	outFOMW := config.ExchangePublisher("OUTPUT_FO_EXCHANGE", []string{}, conn)
 	defer outFOMW.Close()
 
-	outFIMW := config.Exchange("OUTPUT_FI_EXCHANGE", []string{}, conn)
+	outFIMW := config.ExchangePublisher("OUTPUT_FI_EXCHANGE", []string{}, conn)
 	defer outFIMW.Close()
 
-	foKeyPrefix  := config.EnvOrDefault("OUTPUT_FO_KEY_PREFIX", "fo")
+	foKeyPrefix := config.EnvOrDefault("OUTPUT_FO_KEY_PREFIX", "fo")
 	foPartitions := config.MustEnvInt("OUTPUT_FO_PARTITIONS")
-	fiKeyPrefix  := config.EnvOrDefault("OUTPUT_FI_KEY_PREFIX", "fi")
+	fiKeyPrefix := config.EnvOrDefault("OUTPUT_FI_KEY_PREFIX", "fi")
 	fiPartitions := config.MustEnvInt("OUTPUT_FI_PARTITIONS")
 
 	f := newFanSrcFilter(outFOMW, outFIMW, foKeyPrefix, foPartitions, fiKeyPrefix, fiPartitions)

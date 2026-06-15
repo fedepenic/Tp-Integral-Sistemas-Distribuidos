@@ -153,7 +153,7 @@ func (s *Scalable) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) 
 		}
 	}
 
-	eofBroadcast, err := middleware.CreateExchangeMiddleware(eofExchange, broadcastKeys, s.conn)
+	eofBroadcast, err := middleware.CreateExchangePublisherMiddleware(eofExchange, broadcastKeys, s.conn)
 	if err != nil {
 		log.Fatalf("[%s] connect to EOF broadcast exchange: %v", s.name, err)
 	}

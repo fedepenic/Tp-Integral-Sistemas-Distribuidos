@@ -27,7 +27,7 @@ func main() {
 	outputKeyPrefix := mustEnv("OUTPUT_KEY_PREFIX")
 	outputPartitions := mustEnvInt("OUTPUT_PARTITIONS")
 
-	outputMW, err := middleware.NewExchangeMiddleware(
+	outputMW, err := middleware.NewExchangePublisherMiddleware(
 		mustEnv("OUTPUT_EXCHANGE"),
 		[]string{},
 		conn,

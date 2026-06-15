@@ -145,7 +145,7 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack fun
 
 	deliveries, err := qm.ch.Consume(
 		qm.queueName,
-		"",
+		qm.queueName,
 		false,
 		false,
 		false,

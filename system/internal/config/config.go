@@ -84,6 +84,17 @@ func Exchange(nameKey string, routingKeys []string, conn middleware.ConnSettings
 	return mw
 }
 
+// ExchangePublisher retorna un exchange publisher-only usando nombre y keys
+// leídos del entorno. No declara queues porque solo publica mensajes.
+func ExchangePublisher(nameKey string, routingKeys []string, conn middleware.ConnSettings) middleware.Middleware {
+	name := MustEnv(nameKey)
+	mw, err := middleware.NewExchangePublisherMiddleware(name, routingKeys, conn)
+	if err != nil {
+		log.Fatalf("[config] exchange publisher %s (%s): %v", nameKey, name, err)
+	}
+	return mw
+}
+
 // ExchangeWithKey retorna un ExchangeMiddleware cuya única routing key
 // también se lee del entorno. Útil para exchanges de EOF con key fija.
 func ExchangeWithKey(nameKey string, routingKeyEnv string, conn middleware.ConnSettings) middleware.Middleware {

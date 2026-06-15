@@ -12,7 +12,7 @@ func main() {
 	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
-	outputMW := config.Exchange("OUTPUT_EXCHANGE", []string{}, conn)
+	outputMW := config.ExchangePublisher("OUTPUT_EXCHANGE", []string{}, conn)
 	defer outputMW.Close()
 
 	m := newMaxPerBank(outputMW)

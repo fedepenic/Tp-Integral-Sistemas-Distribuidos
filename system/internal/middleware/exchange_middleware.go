@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -25,7 +26,34 @@ type ExchangeMiddleware struct {
 	sendMu sync.Mutex
 }
 
+// exclusiveQueueName builds a human-readable name for the exclusive,
+// auto-delete queue that each ExchangeMiddleware consumer gets. Format:
+// "{exchange}.{keys}" — identifiable in the RabbitMQ UI and unique for the
+// current topology, where each exchange consumer owns a distinct routing key.
+func exclusiveQueueName(exchange string, keys []string) string {
+	nonEmpty := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k != "" {
+			nonEmpty = append(nonEmpty, k)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return fmt.Sprintf("%s.all", exchange)
+	}
+	return fmt.Sprintf("%s.%s", exchange, strings.Join(nonEmpty, "+"))
+}
+
 func NewExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
+	return newExchangeMiddleware(exchange, keys, connectionSettings, true)
+}
+
+// NewExchangePublisherMiddleware declares a direct exchange for publishing only.
+// It does not declare or bind a queue because publishers do not consume from one.
+func NewExchangePublisherMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
+	return newExchangeMiddleware(exchange, keys, connectionSettings, false)
+}
+
+func newExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings, declareQueue bool) (Middleware, error) {
 	connStr := fmt.Sprintf("amqp://guest:guest@%s:%d/", connectionSettings.Hostname, connectionSettings.Port)
 	conn, err := amqp.Dial(connStr)
 	if err != nil {
@@ -52,25 +80,29 @@ func NewExchangeMiddleware(exchange string, keys []string, connectionSettings Co
 		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
 	}
 
-	q, err := ch.QueueDeclare(
-		"",
-		false,
-		true,
-		true,
-		false,
-		nil,
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
-	}
-
-	for _, key := range keys {
-		if err := ch.QueueBind(q.Name, key, exchange, false, nil); err != nil {
+	queueName := ""
+	if declareQueue {
+		q, err := ch.QueueDeclare(
+			exclusiveQueueName(exchange, keys),
+			false,
+			true,
+			true,
+			false,
+			nil,
+		)
+		if err != nil {
 			ch.Close()
 			conn.Close()
 			return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+		}
+
+		queueName = q.Name
+		for _, key := range keys {
+			if err := ch.QueueBind(queueName, key, exchange, false, nil); err != nil {
+				ch.Close()
+				conn.Close()
+				return nil, fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
+			}
 		}
 	}
 
@@ -79,19 +111,23 @@ func NewExchangeMiddleware(exchange string, keys []string, connectionSettings Co
 		ch:        ch,
 		exchange:  exchange,
 		keys:      keys,
-		queueName: q.Name,
+		queueName: queueName,
 		stopCh:    make(chan struct{}),
 	}, nil
 }
 
 func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg Message, ack func(), nack func())) error {
+	if em.queueName == "" {
+		return ErrMessageMiddlewareMessage
+	}
+
 	if err := em.ch.Qos(1, 0, false); err != nil {
 		return fmt.Errorf("%w: %v", ErrMessageMiddlewareMessage, err)
 	}
 
 	deliveries, err := em.ch.Consume(
 		em.queueName,
-		"",
+		em.queueName,
 		false,
 		false,
 		false,

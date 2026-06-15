@@ -46,7 +46,7 @@ func main() {
 
 func buildOutputMW(conn middleware.ConnSettings) (middleware.Middleware, error) {
 	if exchange := os.Getenv("OUTPUT_EXCHANGE"); exchange != "" {
-		return middleware.NewExchangeMiddleware(exchange, []string{os.Getenv("OUTPUT_KEY")}, conn)
+		return middleware.NewExchangePublisherMiddleware(exchange, []string{os.Getenv("OUTPUT_KEY")}, conn)
 	}
 	return middleware.NewQueueMiddleware(mustEnv("OUTPUT_QUEUE"), conn)
 }
