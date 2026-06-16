@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +44,19 @@ func parseInterval(s string) time.Duration {
 		return 15 * time.Second
 	}
 	return d
+}
+
+func parsePositiveInt(key string, def int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return def
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		log.Printf("[watcher] WARNING: invalid %s=%q, using %d", key, value, def)
+		return def
+	}
+	return n
 }
 
 // parseServices parses SERVICES env var entries in the form "name:port" or
@@ -90,6 +104,28 @@ func pingTCP(host, port string, timeout time.Duration) bool {
 	return true
 }
 
+func startHealthServer(port string) {
+	if port == "" {
+		return
+	}
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Printf("[watcher] health server could not listen on :%s: %v", port, err)
+		return
+	}
+	log.Printf("[watcher] health server listening on :%s", port)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Printf("[watcher] health server accept error: %v", err)
+				return
+			}
+			conn.Close()
+		}
+	}()
+}
+
 // findContainerID queries Docker for a container belonging to the given compose
 // project and service name. Docker is only used here to obtain the ID for restart.
 func findContainerID(client *http.Client, project, service string) (string, error) {
@@ -123,72 +159,98 @@ func findContainerID(client *http.Client, project, service string) (string, erro
 	return id, nil
 }
 
-// restartContainer sends POST /containers/{id}/start to the Docker daemon.
+// restartContainer sends POST /containers/{id}/restart to the Docker daemon.
 func restartContainer(client *http.Client, id string) error {
 	resp, err := client.Post(
-		fmt.Sprintf("http://localhost/containers/%s/start", id),
+		fmt.Sprintf("http://localhost/containers/%s/restart", id),
 		"application/json",
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("docker start: %w", err)
+		return fmt.Errorf("docker restart: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 204 = started, 304 = already running.
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
-		return fmt.Errorf("docker start returned unexpected status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("docker restart returned unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }
 
-func checkAll(dockerClient *http.Client, project string, services []ServiceTarget, pingTimeout time.Duration) {
-	log.Printf("[watcher] --- health check round (project=%s, services=%d) ---", project, len(services))
+func sleepUntilNextSlot(watcherID, watcherTotal int, interval time.Duration) time.Duration {
+	if watcherTotal <= 1 {
+		return 0
+	}
+	slot := interval / time.Duration(watcherTotal)
+	if slot <= 0 {
+		return 0
+	}
+	targetOffset := time.Duration(watcherID-1) * slot
+	currentOffset := time.Duration(time.Now().UnixNano()) % interval
+	wait := targetOffset - currentOffset
+	if wait < 0 {
+		wait += interval
+	}
+	time.Sleep(wait)
+	return wait
+}
+
+func checkAll(dockerClient *http.Client, project string, services []ServiceTarget, pingTimeout time.Duration, watcherID int) {
+	log.Printf("[watcher %d] --- health check round (project=%s, services=%d) ---", watcherID, project, len(services))
 
 	alive, dead, failed := 0, 0, 0
 
 	for _, svc := range services {
 		addr := net.JoinHostPort(svc.host, svc.port)
-		log.Printf("[watcher] PING   %s @ %s ...", svc.name, addr)
+		log.Printf("[watcher %d] PING   %s @ %s ...", watcherID, svc.name, addr)
 
 		if pingTCP(svc.host, svc.port, pingTimeout) {
-			log.Printf("[watcher] OK     %s — responded on %s", svc.name, addr)
+			log.Printf("[watcher %d] OK     %s — responded on %s", watcherID, svc.name, addr)
 			alive++
 			continue
 		}
 
-		log.Printf("[watcher] DOWN   %s — no response on %s", svc.name, addr)
+		log.Printf("[watcher %d] DOWN   %s — no response on %s", watcherID, svc.name, addr)
 		dead++
 
-		log.Printf("[watcher]   looking up container for service=%s ...", svc.name)
+		log.Printf("[watcher %d]   looking up container for service=%s ...", watcherID, svc.name)
 		id, err := findContainerID(dockerClient, project, svc.name)
 		if err != nil {
-			log.Printf("[watcher]   ERROR could not find container for %s: %v", svc.name, err)
+			log.Printf("[watcher %d]   ERROR could not find container for %s: %v", watcherID, svc.name, err)
 			failed++
 			continue
 		}
 
-		log.Printf("[watcher]   restarting container %s (id=%s) ...", svc.name, id[:12])
+		log.Printf("[watcher %d]   restarting container %s (id=%s) ...", watcherID, svc.name, id[:12])
 		if err := restartContainer(dockerClient, id); err != nil {
-			log.Printf("[watcher]   ERROR could not restart %s: %v", svc.name, err)
+			log.Printf("[watcher %d]   ERROR could not restart %s: %v", watcherID, svc.name, err)
 			failed++
 		} else {
-			log.Printf("[watcher]   UP    %s restarted successfully", svc.name)
+			log.Printf("[watcher %d]   UP    %s restarted successfully", watcherID, svc.name)
 		}
 	}
 
-	log.Printf("[watcher] --- round done: alive=%d restarted=%d failed=%d ---", alive, dead-failed, failed)
+	log.Printf("[watcher %d] --- round done: alive=%d restarted=%d failed=%d ---", watcherID, alive, dead-failed, failed)
 }
 
 func main() {
-	project      := envOrDefault("COMPOSE_PROJECT", "system")
-	interval     := parseInterval(envOrDefault("WATCH_INTERVAL", "15s"))
-	pingTimeout  := parseInterval(envOrDefault("PING_TIMEOUT", "3s"))
+	project := envOrDefault("COMPOSE_PROJECT", "system")
+	interval := parseInterval(envOrDefault("WATCH_INTERVAL", "15s"))
+	pingTimeout := parseInterval(envOrDefault("PING_TIMEOUT", "3s"))
 	startupDelay := parseInterval(envOrDefault("STARTUP_DELAY", "30s"))
-	servicesRaw  := envOrDefault("SERVICES", "")
+	servicesRaw := envOrDefault("SERVICES", "")
+	watcherID := parsePositiveInt("WATCHER_ID", 1)
+	watcherTotal := parsePositiveInt("WATCHER_TOTAL", 1)
+	healthPort := envOrDefault("HEALTH_PORT", "")
+
+	if watcherID > watcherTotal {
+		log.Printf("[watcher] WARNING: WATCHER_ID=%d is greater than WATCHER_TOTAL=%d, using WATCHER_ID=1", watcherID, watcherTotal)
+		watcherID = 1
+	}
+	startHealthServer(healthPort)
 
 	log.Printf("[watcher] ============================================================")
-	log.Printf("[watcher] watcher starting")
+	log.Printf("[watcher] watcher starting     : %d/%d", watcherID, watcherTotal)
 	log.Printf("[watcher] compose project  : %s", project)
 	log.Printf("[watcher] check interval   : %s", interval)
 	log.Printf("[watcher] ping timeout     : %s", pingTimeout)
@@ -218,8 +280,10 @@ func main() {
 	dockerClient := newDockerClient()
 
 	for {
-		checkAll(dockerClient, project, services, pingTimeout)
-		log.Printf("[watcher] next check in %s", interval)
-		time.Sleep(interval)
+		wait := sleepUntilNextSlot(watcherID, watcherTotal, interval)
+		if wait > 0 {
+			log.Printf("[watcher %d] aligned to slot after waiting %s", watcherID, wait)
+		}
+		checkAll(dockerClient, project, services, pingTimeout, watcherID)
 	}
 }
