@@ -24,6 +24,7 @@ from pathlib import Path
 COMPOSE_FILE = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 PROJECT_ROOT = Path(__file__).parent.parent
 INSTANCE_SUFFIX_RE = re.compile(r"^(?P<base>.+)_(?P<instance>\d+)$")
+KILL_ALL_SERVICE_KINDS = {"client", "gateway"}
 
 
 def parse_services(compose_path: Path) -> list[str]:
@@ -50,11 +51,19 @@ def service_kind(service: str) -> str:
     return service
 
 
+def is_excluded(service: str, excluded: set[str]) -> bool:
+    return service in excluded or service_kind(service) in excluded
+
+
 def group_services(services: list[str]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     for service in services:
         groups.setdefault(service_kind(service), []).append(service)
     return groups
+
+
+def can_kill_all_instances(service: str) -> bool:
+    return service_kind(service) in KILL_ALL_SERVICE_KINDS or service.startswith("sink_")
 
 
 def running_services(services: list[str]) -> set[str]:
@@ -89,9 +98,12 @@ def choose_targets(services_by_kind: dict[str, list[str]], services_per_interval
 
     for services in services_by_kind.values():
         running_group = [svc for svc in services if svc in running]
-        if len(running_group) <= 1:
+        if not running_group:
             continue
-        candidates.extend(random.sample(running_group, len(running_group) - 1))
+        if all(can_kill_all_instances(svc) for svc in running_group):
+            candidates.extend(running_group)
+        elif len(running_group) > 1:
+            candidates.extend(random.sample(running_group, len(running_group) - 1))
 
     if not candidates:
         return []
@@ -122,17 +134,17 @@ def main() -> None:
         sys.exit(1)
 
     all_services = parse_services(COMPOSE_FILE)
-    services = [s for s in all_services if s not in excluded]
+    services = [s for s in all_services if not is_excluded(s, excluded)]
     services_by_kind = group_services(services)
     killable_services = [
         service
         for services_group in services_by_kind.values()
-        if len(services_group) > 1
+        if len(services_group) > 1 or all(can_kill_all_instances(s) for s in services_group)
         for service in services_group
     ]
 
     if not killable_services:
-        print("ERROR: No replicated services available to kill (check CHAOS_EXCLUDE).")
+        print("ERROR: No services available to kill (check CHAOS_EXCLUDE).")
         sys.exit(1)
 
     print(f"Chaos mode ON — interval: {interval}s, services per interval: {services_per_interval}")
