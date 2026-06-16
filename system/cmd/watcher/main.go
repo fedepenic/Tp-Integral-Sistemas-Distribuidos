@@ -28,6 +28,7 @@ type Container struct {
 	ID     string            `json:"Id"`
 	Names  []string          `json:"Names"`
 	State  string            `json:"State"`
+	Status string            `json:"Status"`
 	Labels map[string]string `json:"Labels"`
 }
 
@@ -126,9 +127,9 @@ func startHealthServer(port string) {
 	}()
 }
 
-// findContainerID queries Docker for a container belonging to the given compose
+// findContainer queries Docker for a container belonging to the given compose
 // project and service name. Docker is only used here to obtain the ID for restart.
-func findContainerID(client *http.Client, project, service string) (string, error) {
+func findContainer(client *http.Client, project, service string) (Container, error) {
 	filters := fmt.Sprintf(
 		`{"label":["com.docker.compose.project=%s","com.docker.compose.service=%s"]}`,
 		project, service,
@@ -137,26 +138,30 @@ func findContainerID(client *http.Client, project, service string) (string, erro
 
 	resp, err := client.Get(reqURL)
 	if err != nil {
-		return "", fmt.Errorf("list containers: %w", err)
+		return Container{}, fmt.Errorf("list containers: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("list containers: status %d", resp.StatusCode)
+		return Container{}, fmt.Errorf("list containers: status %d", resp.StatusCode)
 	}
 
 	var containers []Container
 	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
-		return "", fmt.Errorf("decode containers: %w", err)
+		return Container{}, fmt.Errorf("decode containers: %w", err)
 	}
 
 	if len(containers) == 0 {
-		return "", fmt.Errorf("no container found for service=%s in project=%s", service, project)
+		return Container{}, fmt.Errorf("no container found for service=%s in project=%s", service, project)
 	}
 
-	id := containers[0].ID
-	log.Printf("[watcher]   container id for %s: %s", service, id[:12])
-	return id, nil
+	container := containers[0]
+	log.Printf("[watcher]   container id for %s: %s", service, container.ID[:12])
+	return container, nil
+}
+
+func completedSuccessfully(container Container) bool {
+	return container.State == "exited" && strings.HasPrefix(container.Status, "Exited (0)")
 }
 
 // restartContainer sends POST /containers/{id}/restart to the Docker daemon.
@@ -198,7 +203,7 @@ func sleepUntilNextSlot(watcherID, watcherTotal int, interval time.Duration) tim
 func checkAll(dockerClient *http.Client, project string, services []ServiceTarget, pingTimeout time.Duration, watcherID int) {
 	log.Printf("[watcher %d] --- health check round (project=%s, services=%d) ---", watcherID, project, len(services))
 
-	alive, dead, failed := 0, 0, 0
+	alive, dead, completed, restarted, failed := 0, 0, 0, 0, 0
 
 	for _, svc := range services {
 		addr := net.JoinHostPort(svc.host, svc.port)
@@ -214,23 +219,31 @@ func checkAll(dockerClient *http.Client, project string, services []ServiceTarge
 		dead++
 
 		log.Printf("[watcher %d]   looking up container for service=%s ...", watcherID, svc.name)
-		id, err := findContainerID(dockerClient, project, svc.name)
+		container, err := findContainer(dockerClient, project, svc.name)
 		if err != nil {
 			log.Printf("[watcher %d]   ERROR could not find container for %s: %v", watcherID, svc.name, err)
 			failed++
 			continue
 		}
 
+		if completedSuccessfully(container) {
+			log.Printf("[watcher %d]   DONE  %s completed successfully; not restarting", watcherID, svc.name)
+			completed++
+			continue
+		}
+
+		id := container.ID
 		log.Printf("[watcher %d]   restarting container %s (id=%s) ...", watcherID, svc.name, id[:12])
 		if err := restartContainer(dockerClient, id); err != nil {
 			log.Printf("[watcher %d]   ERROR could not restart %s: %v", watcherID, svc.name, err)
 			failed++
 		} else {
 			log.Printf("[watcher %d]   UP    %s restarted successfully", watcherID, svc.name)
+			restarted++
 		}
 	}
 
-	log.Printf("[watcher %d] --- round done: alive=%d restarted=%d failed=%d ---", watcherID, alive, dead-failed, failed)
+	log.Printf("[watcher %d] --- round done: alive=%d down=%d completed=%d restarted=%d failed=%d ---", watcherID, alive, dead, completed, restarted, failed)
 }
 
 func main() {

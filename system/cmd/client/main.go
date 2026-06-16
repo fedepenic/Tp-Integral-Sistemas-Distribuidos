@@ -10,10 +10,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/health"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
 func main() {
+	health.StartIfEnabled()
+
 	gatewayHost := envOrDefault("GATEWAY_HOST", "gateway")
 	gatewayPort := envOrDefault("GATEWAY_PORT", "8080")
 	inputDir := envOrDefault("INPUT_DIR", "/data")
@@ -24,8 +27,8 @@ func main() {
 	conn := dialWithRetry(addr, 10, 2*time.Second)
 	defer conn.Close()
 
-	accountsFile      := envOrDefault("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
-	transactionsFile  := envOrDefault("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
+	accountsFile := envOrDefault("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
+	transactionsFile := envOrDefault("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
 
 	if err := sendAccounts(conn, inputDir+"/"+accountsFile, batchSize, clientID); err != nil {
 		log.Fatalf("sending accounts: %v", err)

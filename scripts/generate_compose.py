@@ -441,6 +441,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append("")
 
     # Gateway — single instance, no scaling
+    watcher_targets.append(("gateway", HEALTH_PORT))
     lines.append(f"  gateway:")
     lines.append(f"    image: gateway")
     lines.append(f"    build:")
@@ -455,6 +456,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append(f"      - OUTPUT_QUEUE=raw_transactions")
     lines.append(f"      - REPORTS_QUEUE=reports")
     lines.append(f"      - OUTPUT_DIR=/output/system")
+    append_watcher_health_env(lines, watcher_enabled)
     lines.append(f"    volumes:")
     lines.append(f"      - ../output:/output")
     lines.append(f"    depends_on:")
@@ -468,8 +470,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     transactions_file = env.get("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
     accounts_file = env.get("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
     for i in range(1, n_clients + 1):
-        lines.append(f"  client_{i}:")
-        lines.append(f"    image: client_{i}")
+        svc_instance = f"client_{i}"
+        watcher_targets.append((svc_instance, HEALTH_PORT))
+        lines.append(f"  {svc_instance}:")
+        lines.append(f"    image: {svc_instance}")
         lines.append(f"    build:")
         lines.append(f"      context: .")
         lines.append(f"      dockerfile: cmd/Dockerfile")
@@ -484,6 +488,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - BATCH_SIZE={batch_size}")
         lines.append(f"      - TRANSACTIONS_FILE={transactions_file}")
         lines.append(f"      - ACCOUNTS_FILE={accounts_file}")
+        append_watcher_health_env(lines, watcher_enabled)
         lines.append(f"    volumes:")
         lines.append(f"      - ../input:/data")
         lines.append(f"    depends_on:")

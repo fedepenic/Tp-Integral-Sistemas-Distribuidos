@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/health"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -20,6 +21,8 @@ func envOrDefault(key, def string) string {
 }
 
 func main() {
+	health.StartIfEnabled()
+
 	port := envOrDefault("GATEWAY_PORT", "8080")
 	host := envOrDefault("RABBITMQ_HOST", "rabbitmq")
 	portStr := envOrDefault("RABBITMQ_PORT", "5672")
