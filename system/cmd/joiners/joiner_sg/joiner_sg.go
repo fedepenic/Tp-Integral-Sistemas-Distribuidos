@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 	"sync"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -16,7 +19,6 @@ const chunkSize = 10_000
 func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPartitions int) node.ProcessFunc {
 	var mu sync.Mutex
 	states := make(map[string]sgState)
-
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
 			mu.Lock()
@@ -24,7 +26,16 @@ func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPa
 			mu.Unlock()
 			for i := 0; i < outputPartitions; i++ {
 				routingKey := worker.RoutingKey(outputKeyPrefix, i)
-				data, err := json.Marshal(batch)
+				eof := protocol.Batch{
+					Type:     protocol.BatchTypeEOF,
+					ClientID: batch.ClientID,
+					BatchID: id.AggregatorEOF(
+						"joiner_sg",
+						config.MustEnvInt("INSTANCE_ID"),
+						batch.ClientID,
+					),
+				}
+				data, err := json.Marshal(eof)
 				if err != nil {
 					log.Printf("[joiner_sg] marshal EOF partition=%d: %v", i, err)
 					continue
@@ -89,6 +100,23 @@ func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPa
 }
 
 func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem, keyPrefix string, partitions int) {
+	sort.Slice(items, func(i, j int) bool {
+		a := items[i]
+		b := items[j]
+
+		ka := a.FromBank +
+			"|" + a.FromAccount +
+			"|" + a.ToBank +
+			"|" + a.ToAccount
+
+		kb := b.FromBank +
+			"|" + b.FromAccount +
+			"|" + b.ToBank +
+			"|" + b.ToAccount
+
+		return ka < kb
+	})
+
 	grouped := make(map[int][]protocol.ScatterGatherItem)
 	for _, item := range items {
 		key := item.FromBank + item.FromAccount + item.ToBank + item.ToAccount
@@ -107,6 +135,12 @@ func sendChunks(outputMW middleware.Middleware, clientID string, items []protoco
 				Type:               protocol.BatchTypeScatterGather,
 				ClientID:           clientID,
 				ScatterGatherItems: partItems[:end],
+				BatchID: id.HashBatchJoinSG(
+					"joiner_sg",
+					clientID,
+					partition,
+					partItems[:end],
+				),
 			}
 			partItems = partItems[end:]
 			data, err := json.Marshal(out)

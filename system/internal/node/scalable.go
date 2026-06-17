@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -251,7 +252,14 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		}
 
 		chunks := splitBatch(result, chunkSize)
-		for _, chunk := range chunks {
+		for chunkIdx, chunk := range chunks {
+			chunk.BatchID = id.Aggregator(
+				s.name,
+				chunk.ClientID,
+				0,
+				chunkIdx,
+				s.instanceID,
+			)
 			data, err := json.Marshal(chunk)
 			if err != nil {
 				log.Printf("[%s] marshal chunk: %v", s.name, err)
