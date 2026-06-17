@@ -3,7 +3,7 @@ package main
 type fanOutEntry struct {
 	fromBank string
 	fromAcct string
-	refs     []accountRef
+	refs     map[accountRef]struct{}
 }
 
 type fanOutResult struct {

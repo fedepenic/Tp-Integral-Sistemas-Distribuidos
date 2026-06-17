@@ -53,10 +53,11 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 			entry = &fanInEntry{
 				toBank: tx.ToBank,
 				toAcct: tx.ToAccount,
+				refs:   make(map[accountRef]struct{}),
 			}
 			byTo[toKey] = entry
 		}
-		entry.refs = append(entry.refs, accountRef{bank: tx.FromBank, account: tx.FromAccount})
+		entry.refs[accountRef{bank: tx.FromBank, account: tx.FromAccount}] = struct{}{}
 	}
 	return protocol.Batch{}, false
 }
@@ -81,11 +82,11 @@ func (f *fanIn) flush(clientID string) {
 	chunkCountByPartition := make(map[int]int)
 	for _, key := range keys {
 		entry := byTo[key]
-		for _, from := range entry.refs {
+		for ref := range entry.refs {
 			total++
 			res := fanInResult{
-				MiddleBank:    from.bank,
-				MiddleAccount: from.account,
+				MiddleBank:    ref.bank,
+				MiddleAccount: ref.account,
 				ToBank:        entry.toBank,
 				ToAccount:     entry.toAcct,
 			}

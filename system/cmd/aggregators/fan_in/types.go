@@ -5,11 +5,10 @@ type accountRef struct {
 	account string
 }
 
-
 type fanInEntry struct {
 	toBank string
 	toAcct string
-	refs   []accountRef
+	refs   map[accountRef]struct{}
 }
 
 type fanInResult struct {

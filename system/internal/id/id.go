@@ -42,6 +42,16 @@ func AggregatorEOF(nodeName string, instance int, clientID string) string {
 	)
 }
 
+func AggregatorEOFPartitioned(nodeName string, clientID string, instance int, partition int) string {
+	return fmt.Sprintf("%s:%s:%d:%d:%s",
+		nodeName,
+		clientID,
+		instance,
+		partition,
+		"eof",
+	)
+}
+
 func HashBatchJoinSG(nodeName string, clientID string, partition int, items []protocol.ScatterGatherItem) string {
 	payload := struct {
 		Node      string                       `json:"node"`

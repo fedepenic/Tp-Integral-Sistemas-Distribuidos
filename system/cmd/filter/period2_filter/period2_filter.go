@@ -43,12 +43,12 @@ func newProcess(outputMW middleware.Middleware, keyPrefix string, partitions int
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
-		sendPartitioned(outputMW, batch.ClientID, out, keyPrefix, partitions)
+		sendPartitioned(outputMW, batch.ClientID, out, keyPrefix, partitions, batch.BatchID)
 		return protocol.Batch{}, false
 	}
 }
 
-func sendPartitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int) {
+func sendPartitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, parentID string) {
 	grouped := make(map[int][]protocol.Transaction)
 	for _, in := range inputs {
 		p := worker.PartitionForKey(in.PaymentFormat, partitions)
@@ -61,7 +61,7 @@ func sendPartitioned(mw middleware.Middleware, clientID string, inputs []filterI
 	}
 	for p, group := range grouped {
 		key := worker.RoutingKey(keyPrefix, p)
-		b := protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: group, BatchID: id.New()}
+		b := protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: group, BatchID: id.Child(parentID, p)}
 		data, err := json.Marshal(b)
 		if err != nil {
 			log.Printf("[period2_filter] marshal batch partition=%d: %v", p, err)

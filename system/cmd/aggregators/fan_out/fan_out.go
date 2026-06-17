@@ -53,10 +53,11 @@ func (f *fanOut) process(batch protocol.Batch) (protocol.Batch, bool) {
 			entry = &fanOutEntry{
 				fromBank: tx.FromBank,
 				fromAcct: tx.FromAccount,
+				refs:     make(map[accountRef]struct{}),
 			}
 			byFrom[fromKey] = entry
 		}
-		entry.refs = append(entry.refs, accountRef{bank: tx.ToBank, account: tx.ToAccount})
+		entry.refs[accountRef{bank: tx.ToBank, account: tx.ToAccount}] = struct{}{}
 	}
 	return protocol.Batch{}, false
 }
@@ -80,12 +81,12 @@ func (f *fanOut) flush(clientID string) {
 
 	for _, key := range keys {
 		entry := byFrom[key]
-		for _, to := range entry.refs {
+		for ref := range entry.refs {
 			res := fanOutResult{
 				FromBank:      entry.fromBank,
 				FromAccount:   entry.fromAcct,
-				MiddleBank:    to.bank,
-				MiddleAccount: to.account,
+				MiddleBank:    ref.bank,
+				MiddleAccount: ref.account,
 			}
 
 			partition := worker.PartitionForKey(res.MiddleAccount, f.outputPartitions)
