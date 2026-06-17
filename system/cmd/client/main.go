@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/health"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -21,7 +22,7 @@ func main() {
 	gatewayPort := envOrDefault("GATEWAY_PORT", "8080")
 	inputDir := envOrDefault("INPUT_DIR", "/data")
 	clientID := envOrDefault("INSTANCE_ID", "unknown")
-	batchSize := envIntOrDefault("BATCH_SIZE", 100)
+	batchSize := envIntOrDefault("BATCH_SIZE", 1000)
 
 	addr := fmt.Sprintf("%s:%s", gatewayHost, gatewayPort)
 	conn := dialWithRetry(addr, 10, 2*time.Second)
@@ -38,7 +39,7 @@ func main() {
 		log.Fatalf("sending transactions: %v", err)
 	}
 
-	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID}); err != nil {
+	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: id.New()}); err != nil {
 		log.Fatalf("sending EOF: %v", err)
 	}
 
@@ -116,7 +117,7 @@ func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) er
 }
 
 func flushAccounts(conn net.Conn, accounts []protocol.Account, clientID string) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeAccounts, ClientID: clientID, Accounts: accounts})
+	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeAccounts, ClientID: clientID, Accounts: accounts, BatchID: id.New()})
 }
 
 func sendTransactions(conn net.Conn, path string, batchSize int, clientID string) error {
@@ -181,7 +182,7 @@ func sendTransactions(conn net.Conn, path string, batchSize int, clientID string
 }
 
 func flushTransactions(conn net.Conn, txns []protocol.Transaction, clientID string) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns})
+	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns, BatchID: id.New()})
 }
 
 func envOrDefault(key, def string) string {

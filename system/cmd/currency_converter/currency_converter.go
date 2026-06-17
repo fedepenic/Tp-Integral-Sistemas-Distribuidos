@@ -231,7 +231,7 @@ func (c *converter) rateToUSDFromAPI(currency, date string) (float64, error) {
 }
 
 func (c *converter) convertBatch(batch protocol.Batch) protocol.Batch {
-	out := protocol.Batch{Type: batch.Type, ClientID: batch.ClientID}
+	out := protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, BatchID: batch.BatchID}
 	for _, txn := range batch.Transactions {
 		rate, err := c.rateToUSD(txn.PaymentCurrency, txnDate(txn.Timestamp))
 		if err != nil {

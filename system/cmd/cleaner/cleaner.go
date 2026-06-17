@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -23,7 +24,7 @@ func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions i
 			if len(txns) == 0 {
 				return protocol.Batch{}, false
 			}
-			return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: txns}, true
+			return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: txns, BatchID: batch.BatchID}, true
 
 		case protocol.BatchTypeAccounts:
 			var accounts []protocol.Account
@@ -33,7 +34,7 @@ func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions i
 				accounts = cleanAccounts(batch.Accounts)
 			}
 			if len(accounts) > 0 {
-				sendAccountBatches(accountsMW, batch.ClientID, accounts, keyPrefix, partitions)
+				sendAccountBatches(accountsMW, batch.ClientID, accounts, keyPrefix, partitions, batch.BatchID)
 			}
 			return protocol.Batch{}, false
 
@@ -48,7 +49,7 @@ func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions i
 	}
 }
 
-func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []protocol.Account, keyPrefix string, partitions int) {
+func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []protocol.Account, keyPrefix string, partitions int, paternID string) {
 	partitioned := make(map[int][]protocol.Account, partitions)
 	for _, a := range accounts {
 		p := worker.PartitionForKey(a.BankID, partitions)
@@ -61,6 +62,7 @@ func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []pr
 			ClientID: clientID,
 			DataType: "accounts",
 			Accounts: batch,
+			BatchID:  id.Child(paternID, p),
 		}
 		data, err := json.Marshal(out)
 		if err != nil {
@@ -78,6 +80,7 @@ func sendAccountsEOF(mw middleware.Middleware, clientID string, keyPrefix string
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
 		DataType: "accounts",
+		BatchID:  id.New(),
 	}
 	data, err := json.Marshal(eof)
 	if err != nil {
