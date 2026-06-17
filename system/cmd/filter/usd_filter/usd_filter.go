@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -35,7 +36,7 @@ func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
-		sendToQ2(directMW, batch.ClientID, out, keyPrefix, partitions)
+		sendToQ2(directMW, batch.ClientID, out, keyPrefix, partitions, batch.BatchID)
 		fanout := make([]protocol.Transaction, 0, len(out))
 		for _, in := range out {
 			fanout = append(fanout, protocol.Transaction{
@@ -48,11 +49,11 @@ func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int
 				AmountPaid:    in.AmountPaid,
 			})
 		}
-		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: fanout}, true
+		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: fanout, BatchID: batch.BatchID}, true
 	}
 }
 
-func sendToQ2(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int) {
+func sendToQ2(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, paternID string) {
 	grouped := make(map[int][]protocol.Transaction)
 	for _, in := range inputs {
 		p := worker.PartitionForKey(in.FromBank, partitions)
@@ -68,6 +69,7 @@ func sendToQ2(mw middleware.Middleware, clientID string, inputs []filterInput, k
 			Type:         protocol.BatchTypeTransactions,
 			ClientID:     clientID,
 			Transactions: group,
+			BatchID:      id.Child(paternID, p),
 		}
 		data, err := json.Marshal(b)
 		if err != nil {

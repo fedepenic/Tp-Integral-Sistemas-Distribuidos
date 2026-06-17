@@ -52,6 +52,7 @@ type ScatterGatherItem struct {
 }
 
 type Batch struct {
+	BatchID            string              `json:"batch_id"`
 	Type               BatchType           `json:"type"`
 	ClientID           string              `json:"client_id,omitempty"`
 	QueryID            string              `json:"query_id,omitempty"`

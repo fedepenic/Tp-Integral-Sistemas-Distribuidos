@@ -65,6 +65,6 @@ func newProcess() node.ProcessFunc {
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
-		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: out}, true
+		return protocol.Batch{Type: batch.Type, ClientID: batch.ClientID, Transactions: out, BatchID: batch.BatchID}, true
 	}
 }

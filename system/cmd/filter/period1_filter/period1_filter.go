@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -50,14 +51,14 @@ func newProcess(
 		if len(out) == 0 {
 			return protocol.Batch{}, false
 		}
-		sendQ3Partitioned(outQ3MW, batch.ClientID, out, q3KeyPrefix, q3Partitions)
+		sendQ3Partitioned(outQ3MW, batch.ClientID, out, q3KeyPrefix, q3Partitions, batch.BatchID)
 		sendQ4Partitioned(outQ4MW, batch.ClientID, out, q4KeyPrefix, q4Partitions,
-			func(in filterInput) string { return in.FromBank + "|" + in.FromAccount })
+			func(in filterInput) string { return in.FromBank + "|" + in.FromAccount }, batch.BatchID)
 		return protocol.Batch{}, false
 	}
 }
 
-func sendQ3Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int) {
+func sendQ3Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, id string) {
 	grouped := make(map[int][]protocol.Transaction)
 	for _, in := range inputs {
 		p := worker.PartitionForKey(in.PaymentFormat, partitions)
@@ -67,11 +68,11 @@ func sendQ3Partitioned(mw middleware.Middleware, clientID string, inputs []filte
 		})
 	}
 	for p, group := range grouped {
-		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p))
+		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p), id, p)
 	}
 }
 
-func sendQ4Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, keyFn func(filterInput) string) {
+func sendQ4Partitioned(mw middleware.Middleware, clientID string, inputs []filterInput, keyPrefix string, partitions int, keyFn func(filterInput) string, id string) {
 	grouped := make(map[int][]protocol.Transaction)
 	for _, in := range inputs {
 		p := worker.PartitionForKey(keyFn(in), partitions)
@@ -83,12 +84,12 @@ func sendQ4Partitioned(mw middleware.Middleware, clientID string, inputs []filte
 		})
 	}
 	for p, group := range grouped {
-		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p))
+		sendTxnBatch(mw, clientID, group, worker.RoutingKey(keyPrefix, p), id, p)
 	}
 }
 
-func sendTxnBatch(mw middleware.Middleware, clientID string, txns []protocol.Transaction, key string) {
-	b := protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns}
+func sendTxnBatch(mw middleware.Middleware, clientID string, txns []protocol.Transaction, key string, parentId string, p int) {
+	b := protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns, BatchID: id.Child(parentId, p)}
 	data, err := json.Marshal(b)
 	if err != nil {
 		log.Printf("[period1_filter] marshal batch key=%s: %v", key, err)
