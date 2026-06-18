@@ -97,6 +97,7 @@ func newProcess() node.ProcessFunc {
 			Type:     protocol.BatchTypeData,
 			ClientID: batch.ClientID,
 			DataType: "max_per_bank",
+			BatchID:  batch.BatchID,
 			Records:  json.RawMessage(records),
 		}, true
 	}

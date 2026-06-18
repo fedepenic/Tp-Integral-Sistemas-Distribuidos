@@ -94,12 +94,12 @@ func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPa
 		states[batch.ClientID] = state
 
 		log.Printf("[joiner_sg] produced items=%d client=%s", len(items), batch.ClientID)
-		sendChunks(outputMW, batch.ClientID, items, outputKeyPrefix, outputPartitions)
+		sendChunks(outputMW, batch.ClientID, items, outputKeyPrefix, outputPartitions, batch.BatchID)
 		return protocol.Batch{}, false
 	}
 }
 
-func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem, keyPrefix string, partitions int) {
+func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem, keyPrefix string, partitions int, parentBatchID string) {
 	sort.Slice(items, func(i, j int) bool {
 		a := items[i]
 		b := items[j]
@@ -126,6 +126,7 @@ func sendChunks(outputMW middleware.Middleware, clientID string, items []protoco
 
 	for partition, partItems := range grouped {
 		routingKey := worker.RoutingKey(keyPrefix, partition)
+		chunkIndex := 0
 		for len(partItems) > 0 {
 			end := chunkSize
 			if end > len(partItems) {
@@ -134,6 +135,7 @@ func sendChunks(outputMW middleware.Middleware, clientID string, items []protoco
 			out := protocol.Batch{
 				Type:               protocol.BatchTypeScatterGather,
 				ClientID:           clientID,
+				BatchID:            id.Joiner(parentBatchID, partition, chunkIndex),
 				ScatterGatherItems: partItems[:end],
 			}
 			partItems = partItems[end:]
@@ -142,6 +144,7 @@ func sendChunks(outputMW middleware.Middleware, clientID string, items []protoco
 				log.Printf("[joiner_sg] marshal chunk partition=%d: %v", partition, err)
 				continue
 			}
+			chunkIndex++
 			if err := outputMW.SendWithKey(middleware.Message{Body: string(data)}, routingKey); err != nil {
 				log.Printf("[joiner_sg] send chunk partition=%d: %v", partition, err)
 			}

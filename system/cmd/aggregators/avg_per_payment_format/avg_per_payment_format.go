@@ -35,11 +35,12 @@ func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat
 }
 
 func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, bool) {
-	// if batch.BatchID != "" {
-	// 	if m.dedup.Seen(batch.BatchID) {
-	// 		return protocol.Batch{}, false
-	// 	}
-	// }
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if m.dedup.Seen(batch.BatchID) {
+			log.Printf("HAY UN DUPLICADO ACA MIRA duplicate batch: %s", batch.BatchID)
+			return protocol.Batch{}, false
+		}
+	}
 	if batch.Type == protocol.BatchTypeEOF {
 		m.flush(batch.ClientID)
 		return batch, true
@@ -58,7 +59,7 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 		s.count++
 		formats[tx.PaymentFormat] = s
 	}
-	//m.dedup.Mark(batch.BatchID)
+	m.dedup.Mark(batch.BatchID)
 	return protocol.Batch{}, false
 }
 

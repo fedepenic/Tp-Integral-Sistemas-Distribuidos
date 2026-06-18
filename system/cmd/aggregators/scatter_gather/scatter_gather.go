@@ -31,11 +31,11 @@ func newScatterGather(outputMW middleware.Middleware) *scatterGather {
 }
 
 func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
-	// if batch.BatchID != "" {
-	// 	if sg.dedup.Seen(batch.BatchID) {
-	// 		return protocol.Batch{}, false
-	// 	}
-	// }
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if sg.dedup.Seen(batch.BatchID) {
+			return protocol.Batch{}, false
+		}
+	}
 	if batch.Type == protocol.BatchTypeEOF {
 		sg.flush(batch.ClientID)
 		return batch, true
@@ -64,7 +64,7 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 		}
 		entry.count++
 	}
-	//sg.dedup.Mark(batch.BatchID)
+	sg.dedup.Mark(batch.BatchID)
 	return protocol.Batch{}, false
 }
 

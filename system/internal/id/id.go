@@ -52,6 +52,14 @@ func AggregatorEOFPartitioned(nodeName string, clientID string, instance int, pa
 	)
 }
 
+func Joiner(parent string, partition int, instance int) string {
+	return fmt.Sprintf("%s:%d:%d",
+		parent,
+		partition,
+		instance,
+	)
+}
+
 func HashBatchJoinSG(nodeName string, clientID string, partition int, items []protocol.ScatterGatherItem) string {
 	payload := struct {
 		Node      string                       `json:"node"`
