@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
@@ -18,6 +21,7 @@ type avgPerPaymentFormat struct {
 	outputMW         middleware.Middleware
 	outputKeyPrefix  string
 	outputPartitions int
+	dedup            *dedup.BatchDeduplicator
 }
 
 func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat {
@@ -26,10 +30,17 @@ func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat
 		outputMW:         outputMW,
 		outputKeyPrefix:  config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinerformat"),
 		outputPartitions: config.MustEnvInt("OUTPUT_PARTITIONS"),
+		dedup:            dedup.New(),
 	}
 }
 
 func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, bool) {
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if m.dedup.Seen(batch.BatchID) {
+			log.Printf("HAY UN DUPLICADO ACA MIRA duplicate batch: %s", batch.BatchID)
+			return protocol.Batch{}, false
+		}
+	}
 	if batch.Type == protocol.BatchTypeEOF {
 		m.flush(batch.ClientID)
 		return batch, true
@@ -48,6 +59,7 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 		s.count++
 		formats[tx.PaymentFormat] = s
 	}
+	m.dedup.Mark(batch.BatchID)
 	return protocol.Batch{}, false
 }
 
@@ -57,9 +69,17 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 		return
 	}
 	delete(m.state, clientID)
+	keys := make([]string, 0, len(formats))
+	for format := range formats {
+		keys = append(keys, format)
+	}
 
+	sort.Strings(keys)
+
+	chunkCountByPartition := make(map[int]int)
 	partitioned := make(map[int][]avgPerFormatResult)
-	for format, s := range formats {
+	for _, format := range keys {
+		s := formats[format]
 		if s.count == 0 {
 			continue
 		}
@@ -74,6 +94,7 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 				clientID,
 				partitioned[p],
 				p,
+				chunkCountByPartition[p],
 			); err != nil {
 				log.Printf(
 					"[avg_per_payment_format] send partition=%d: %v",
@@ -82,6 +103,7 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 				)
 			}
 			partitioned[p] = nil
+			chunkCountByPartition[p]++
 		}
 	}
 
@@ -93,6 +115,7 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 			clientID,
 			results,
 			partition,
+			chunkCountByPartition[partition],
 		); err != nil {
 			log.Printf(
 				"[avg_per_payment_format] send partition=%d: %v",
@@ -109,6 +132,7 @@ func (m *avgPerPaymentFormat) sendPartition(
 	clientID string,
 	results []avgPerFormatResult,
 	partition int,
+	chunkCount int,
 ) error {
 	routingKey := worker.RoutingKey(
 		m.outputKeyPrefix,
@@ -120,11 +144,13 @@ func (m *avgPerPaymentFormat) sendPartition(
 		return err
 	}
 
+	instance := config.MustEnvInt("INSTANCE_ID")
 	out := protocol.Batch{
 		Type:     protocol.BatchTypeData,
 		ClientID: clientID,
 		DataType: "avg_per_format",
 		Records:  raw,
+		BatchID:  id.Aggregator("avg_per_format", clientID, partition, chunkCount, instance),
 	}
 
 	data, err := json.Marshal(out)
@@ -139,15 +165,17 @@ func (m *avgPerPaymentFormat) sendPartition(
 }
 
 func (m *avgPerPaymentFormat) sendEOF(clientID string) {
+	instance := config.MustEnvInt("INSTANCE_ID")
 	eofBatch := protocol.Batch{
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
 		DataType: "avg_per_format",
+		BatchID:  id.AggregatorEOF("avg_per_format", instance, clientID),
 	}
 
 	eofData, err := json.Marshal(eofBatch)
 	if err != nil {
-		log.Printf("[avg_per_payment_format] marshal EOF: %v", err)
+		log.Printf("[avg_per_payment_			format] marshal EOF: %v", err)
 		return
 	}
 

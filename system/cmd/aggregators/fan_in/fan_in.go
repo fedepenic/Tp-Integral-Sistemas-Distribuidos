@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
@@ -69,7 +71,16 @@ func (f *fanIn) flush(clientID string) {
 
 	partitioned := make(map[int][]fanInResult)
 	total := 0
-	for _, entry := range byTo {
+
+	keys := make([]string, 0, len(byTo))
+	for k := range byTo {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	chunkCountByPartition := make(map[int]int)
+	for _, key := range keys {
+		entry := byTo[key]
 		for _, from := range entry.refs {
 			total++
 			res := fanInResult{
@@ -90,11 +101,12 @@ func (f *fanIn) flush(clientID string) {
 			)
 
 			if len(partitioned[partition]) >= chunkSize {
-				if err := f.sendPartition(clientID, partitioned[partition], partition); err != nil {
+				if err := f.sendPartition(clientID, partitioned[partition], partition, chunkCountByPartition[partition]); err != nil {
 					log.Printf("[fan_in] send partition=%d: %v", partition, err)
 				}
 
 				partitioned[partition] = nil
+				chunkCountByPartition[partition]++
 			}
 		}
 	}
@@ -105,7 +117,7 @@ func (f *fanIn) flush(clientID string) {
 			continue
 		}
 
-		if err := f.sendPartition(clientID, results, partition); err != nil {
+		if err := f.sendPartition(clientID, results, partition, chunkCountByPartition[partition]); err != nil {
 			log.Printf("[fan_in] send partition=%d: %v", partition, err)
 		}
 	}
@@ -113,7 +125,7 @@ func (f *fanIn) flush(clientID string) {
 	f.sendEOF(clientID)
 }
 
-func (f *fanIn) sendPartition(clientID string, results []fanInResult, partition int) error {
+func (f *fanIn) sendPartition(clientID string, results []fanInResult, partition int, chunkCount int) error {
 	routingKey := worker.RoutingKey(
 		f.outputKeyPrefix,
 		partition,
@@ -124,11 +136,13 @@ func (f *fanIn) sendPartition(clientID string, results []fanInResult, partition 
 		return err
 	}
 
+	instance := config.MustEnvInt("INSTANCE_ID")
 	out := protocol.Batch{
 		Type:     protocol.BatchTypeData,
 		ClientID: clientID,
 		DataType: "fanin_result",
 		Records:  raw,
+		BatchID:  id.Aggregator("fanin_result", clientID, partition, chunkCount, instance),
 	}
 
 	data, err := json.Marshal(out)
@@ -145,10 +159,12 @@ func (f *fanIn) sendPartition(clientID string, results []fanInResult, partition 
 }
 
 func (f *fanIn) sendEOF(clientID string) {
+	instance := config.MustEnvInt("INSTANCE_ID")
 	eofBatch := protocol.Batch{
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
 		DataType: "fanin_result",
+		BatchID:  id.AggregatorEOF("fanin", instance, clientID),
 	}
 
 	eofData, err := json.Marshal(eofBatch)

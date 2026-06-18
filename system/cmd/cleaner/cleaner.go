@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
@@ -76,18 +77,19 @@ func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []pr
 }
 
 func sendAccountsEOF(mw middleware.Middleware, clientID string, keyPrefix string, partitions int) {
-	eof := protocol.Batch{
-		Type:     protocol.BatchTypeEOF,
-		ClientID: clientID,
-		DataType: "accounts",
-		BatchID:  id.New(),
-	}
-	data, err := json.Marshal(eof)
-	if err != nil {
-		log.Printf("[cleaner] marshal accounts EOF: %v", err)
-		return
-	}
+	instance := config.MustEnvInt("INSTANCE_ID")
 	for p := 0; p < partitions; p++ {
+		eof := protocol.Batch{
+			Type:     protocol.BatchTypeEOF,
+			ClientID: clientID,
+			DataType: "accounts",
+			BatchID:  id.AggregatorEOFPartitioned("cleaner", clientID, instance, p),
+		}
+		data, err := json.Marshal(eof)
+		if err != nil {
+			log.Printf("[cleaner] marshal accounts EOF partition=%d: %v", p, err)
+			continue
+		}
 		key := worker.RoutingKey(keyPrefix, p)
 		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
 			log.Printf("[cleaner] send accounts EOF partition=%d: %v", p, err)

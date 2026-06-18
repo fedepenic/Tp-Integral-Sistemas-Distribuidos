@@ -87,6 +87,7 @@ func newProcess() node.ProcessFunc {
 		return protocol.Batch{
 			Type:         protocol.BatchTypeTransactions,
 			ClientID:     batch.ClientID,
+			BatchID:      batch.BatchID,
 			Transactions: results,
 		}, true
 	}

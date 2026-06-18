@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
@@ -52,8 +54,16 @@ func (m *maxPerBank) flush(clientID string) {
 	}
 	delete(m.state, clientID)
 
+	keys := make([]string, 0, len(banks))
+	for bankID := range banks {
+		keys = append(keys, bankID)
+	}
+	sort.Strings(keys)
+
+	chunkCountByPartition := make(map[int]int)
 	partitioned := make(map[int][]maxPerBankResult)
-	for _, state := range banks {
+	for _, bankID := range keys {
+		state := banks[bankID]
 		result, ok := finalize(state)
 		if !ok {
 			continue
@@ -67,11 +77,12 @@ func (m *maxPerBank) flush(clientID string) {
 		)
 
 		if len(partitioned[partition]) >= chunkSize {
-			if err := m.sendPartition(clientID, partitioned[partition], partition); err != nil {
+			if err := m.sendPartition(clientID, partitioned[partition], partition, chunkCountByPartition[partition]); err != nil {
 				log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
 			}
 
 			partitioned[partition] = nil
+			chunkCountByPartition[partition]++
 		}
 	}
 
@@ -80,7 +91,7 @@ func (m *maxPerBank) flush(clientID string) {
 			continue
 		}
 
-		if err := m.sendPartition(clientID, results, partition); err != nil {
+		if err := m.sendPartition(clientID, results, partition, chunkCountByPartition[partition]); err != nil {
 			log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
 		}
 	}
@@ -88,7 +99,7 @@ func (m *maxPerBank) flush(clientID string) {
 	m.sendEOF(clientID)
 }
 
-func (m *maxPerBank) sendPartition(clientID string, results []maxPerBankResult, partition int) error {
+func (m *maxPerBank) sendPartition(clientID string, results []maxPerBankResult, partition int, chunkCount int) error {
 	routingKey := worker.RoutingKey(
 		m.outputKeyPrefix,
 		partition,
@@ -104,6 +115,7 @@ func (m *maxPerBank) sendPartition(clientID string, results []maxPerBankResult, 
 		ClientID: clientID,
 		DataType: "max_per_bank",
 		Records:  raw,
+		BatchID:  id.Aggregator("max_per_bank", clientID, partition, chunkCount, config.MustEnvInt("INSTANCE_ID")),
 	}
 
 	data, err := json.Marshal(out)
@@ -124,6 +136,7 @@ func (m *maxPerBank) sendEOF(clientID string) {
 		Type:     protocol.BatchTypeEOF,
 		ClientID: clientID,
 		DataType: "max_per_bank",
+		BatchID:  id.AggregatorEOF("max_per_bank", config.MustEnvInt("INSTANCE_ID"), clientID),
 	}
 
 	eofData, err := json.Marshal(eofBatch)

@@ -13,7 +13,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-const chunkSize = 1000
+const chunkSize = 10000
 
 // Scalable is a horizontally-scalable pipeline node. It embeds Node and
 // extends it with peer-coordination for EOF propagation:
@@ -403,6 +403,7 @@ func splitBatch(b protocol.Batch, size int) []protocol.Batch {
 
 	var chunks []protocol.Batch
 	txs := b.Transactions
+	chunkIdx := 0
 	for len(txs) > 0 {
 		end := size
 		if end > len(txs) {
@@ -414,8 +415,12 @@ func splitBatch(b protocol.Batch, size int) []protocol.Batch {
 			DataType:     b.DataType,
 			Transactions: txs[:end],
 		}
+		if b.BatchID != "" {
+			chunk.BatchID = fmt.Sprintf("%s_chunk_%d", b.BatchID, chunkIdx)
+		}
 		chunks = append(chunks, chunk)
 		txs = txs[end:]
+		chunkIdx++
 	}
 	return chunks
 }

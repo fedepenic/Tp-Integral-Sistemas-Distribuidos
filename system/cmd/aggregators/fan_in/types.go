@@ -5,7 +5,6 @@ type accountRef struct {
 	account string
 }
 
-
 type fanInEntry struct {
 	toBank string
 	toAcct string
