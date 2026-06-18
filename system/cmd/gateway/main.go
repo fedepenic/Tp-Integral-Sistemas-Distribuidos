@@ -7,11 +7,107 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/health"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
+
+const clientDisconnectTimeout = 60 * time.Second
+
+type clientStatus struct {
+	timer     *time.Timer
+	completed bool
+	abandoned bool
+}
+
+type clientTracker struct {
+	mu       sync.Mutex
+	clients  map[string]*clientStatus
+	reporter *reporter
+}
+
+func newClientTracker(reporter *reporter) *clientTracker {
+	return &clientTracker{
+		clients:  make(map[string]*clientStatus),
+		reporter: reporter,
+	}
+}
+
+func (t *clientTracker) markActive(clientID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	status := t.statusFor(clientID)
+	if status.abandoned {
+		return false
+	}
+	if status.timer != nil {
+		status.timer.Stop()
+		status.timer = nil
+		log.Printf("client %s reconnected before abandonment timeout", clientID)
+	}
+	return true
+}
+
+func (t *clientTracker) markCompleted(clientID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	status := t.statusFor(clientID)
+	status.completed = true
+	if status.timer != nil {
+		status.timer.Stop()
+		status.timer = nil
+	}
+}
+
+func (t *clientTracker) markDisconnected(clientID string) {
+	if clientID == "" || clientID == "unknown" {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	status := t.statusFor(clientID)
+	if status.completed || status.abandoned {
+		return
+	}
+	if status.timer != nil {
+		status.timer.Stop()
+	}
+	status.timer = time.AfterFunc(clientDisconnectTimeout, func() {
+		t.markAbandoned(clientID)
+	})
+	log.Printf("client %s disconnected before EOF; waiting %s before marking as abandoned", clientID, clientDisconnectTimeout)
+}
+
+func (t *clientTracker) markAbandoned(clientID string) {
+	t.mu.Lock()
+	status := t.statusFor(clientID)
+	if status.completed || status.abandoned {
+		t.mu.Unlock()
+		return
+	}
+	status.abandoned = true
+	status.timer = nil
+	t.mu.Unlock()
+
+	log.Printf("client %s abandoned after %s without reconnecting", clientID, clientDisconnectTimeout)
+	t.reporter.markClientDisconnected(clientID)
+}
+
+func (t *clientTracker) statusFor(clientID string) *clientStatus {
+	status, ok := t.clients[clientID]
+	if !ok {
+		status = &clientStatus{}
+		t.clients[clientID] = status
+	}
+	return status
+}
 
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -49,8 +145,10 @@ func main() {
 	}
 	defer reportsConsumer.Close()
 
+	r := newReporter(outputDir)
+	tracker := newClientTracker(r)
+
 	go func() {
-		r := newReporter(outputDir)
 		if err := reportsConsumer.StartConsuming(r.handle); err != nil {
 			log.Fatalf("consuming from reports queue: %v", err)
 		}
@@ -70,16 +168,23 @@ func main() {
 			continue
 		}
 		log.Printf("client connected: %s", conn.RemoteAddr())
-		go handleClient(conn, producer)
+		go handleClient(conn, producer, tracker)
 	}
 }
 
-func handleClient(conn net.Conn, producer middleware.Middleware) {
+func handleClient(conn net.Conn, producer middleware.Middleware, tracker *clientTracker) {
 	defer conn.Close()
 
 	clientID := "unknown"
 	totalAccounts := 0
 	totalTransactions := 0
+	completed := false
+
+	defer func() {
+		if !completed {
+			tracker.markDisconnected(clientID)
+		}
+	}()
 
 	for {
 		batch, err := protocol.Receive(conn)
@@ -94,6 +199,10 @@ func handleClient(conn net.Conn, producer middleware.Middleware) {
 
 		if batch.ClientID != "" {
 			clientID = batch.ClientID
+			if !tracker.markActive(clientID) {
+				log.Printf("client %s attempted to reconnect after being abandoned; closing connection", clientID)
+				return
+			}
 		}
 
 		switch batch.Type {
@@ -116,6 +225,8 @@ func handleClient(conn net.Conn, producer middleware.Middleware) {
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish EOF: %v", clientID, err)
 			}
+			tracker.markCompleted(clientID)
+			completed = true
 			if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeACK}); err != nil {
 				log.Printf("client %s send ack: %v", clientID, err)
 			}

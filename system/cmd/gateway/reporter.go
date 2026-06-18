@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
+
+const disconnectedMessage = "Client has been disconnected"
 
 type queryWriter struct {
 	file          *os.File
@@ -23,17 +26,19 @@ type queryWriter struct {
 // reporter consumes from the reports queue and writes results to CSV files,
 // one file per (client, query) pair at {outputDir}/client_{clientID}/{queryID}_results.csv.
 //
-// It is driven by a single goroutine (the middleware callback), so no locking
-// is needed on the writers map.
+// It is also updated by abandonment timers, so accesses are serialized with mu.
 type reporter struct {
-	outputDir string
-	writers   map[string]*queryWriter // key: clientID + "/" + queryID
+	mu                  sync.Mutex
+	outputDir           string
+	writers             map[string]*queryWriter // key: clientID + "/" + queryID
+	disconnectedClients map[string]bool
 }
 
 func newReporter(outputDir string) *reporter {
 	return &reporter{
-		outputDir: outputDir,
-		writers:   make(map[string]*queryWriter),
+		outputDir:           outputDir,
+		writers:             make(map[string]*queryWriter),
+		disconnectedClients: make(map[string]bool),
 	}
 }
 
@@ -98,6 +103,59 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 	delete(r.writers, key)
 }
 
+func (r *reporter) markClientDisconnected(clientID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.disconnectedClients[clientID] = true
+	r.closeClientWriters(clientID)
+	if err := r.writeDisconnectedFiles(clientID); err != nil {
+		log.Printf("reporter: write disconnected files for client %s: %v", clientID, err)
+	}
+}
+
+func (r *reporter) closeClientWriters(clientID string) {
+	for key, w := range r.writers {
+		if filepath.Dir(key) != clientID {
+			continue
+		}
+		w.csv.Flush()
+		if err := w.file.Close(); err != nil {
+			log.Printf("reporter: close file for disconnected client %s: %v", clientID, err)
+		}
+		delete(r.writers, key)
+	}
+}
+
+func (r *reporter) writeDisconnectedFiles(clientID string) error {
+	dir := filepath.Join(r.outputDir, "client_"+clientID)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove output dir %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create output dir %s: %w", dir, err)
+	}
+
+	for _, queryID := range []string{"1", "2", "3", "4", "5"} {
+		path := filepath.Join(dir, "query_"+queryID+".csv")
+		f, err := os.Create(path)
+		if err != nil {
+			return fmt.Errorf("create disconnected query file %s: %w", path, err)
+		}
+		w := csv.NewWriter(f)
+		w.Write([]string{disconnectedMessage})
+		w.Flush()
+		if closeErr := f.Close(); closeErr != nil {
+			return fmt.Errorf("close disconnected query file %s: %w", path, closeErr)
+		}
+		if err := w.Error(); err != nil {
+			return fmt.Errorf("write disconnected query file %s: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
 // writeEmptyHeaders writes the column headers for a query with no result rows.
 func writeEmptyHeaders(w *queryWriter, queryID string) {
 	switch queryID {
@@ -116,9 +174,18 @@ func writeEmptyHeaders(w *queryWriter, queryID string) {
 }
 
 func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	var batch protocol.Batch
 	if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
 		log.Printf("reporter: unmarshal batch: %v — discarding", err)
+		ack()
+		return
+	}
+
+	if r.disconnectedClients[batch.ClientID] {
+		log.Printf("reporter: discarding batch for disconnected client %s query %s", batch.ClientID, batch.QueryID)
 		ack()
 		return
 	}
