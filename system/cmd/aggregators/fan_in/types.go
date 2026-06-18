@@ -8,7 +8,7 @@ type accountRef struct {
 type fanInEntry struct {
 	toBank string
 	toAcct string
-	refs   map[accountRef]struct{}
+	refs   []accountRef
 }
 
 type fanInResult struct {

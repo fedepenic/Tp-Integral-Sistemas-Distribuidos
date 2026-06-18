@@ -135,12 +135,6 @@ func sendChunks(outputMW middleware.Middleware, clientID string, items []protoco
 				Type:               protocol.BatchTypeScatterGather,
 				ClientID:           clientID,
 				ScatterGatherItems: partItems[:end],
-				BatchID: id.HashBatchJoinSG(
-					"joiner_sg",
-					clientID,
-					partition,
-					partItems[:end],
-				),
 			}
 			partItems = partItems[end:]
 			data, err := json.Marshal(out)
