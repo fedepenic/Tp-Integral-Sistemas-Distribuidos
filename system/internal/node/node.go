@@ -81,6 +81,7 @@ func (n *Node) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 		if batch.Type == protocol.BatchTypeEOF {
 			if batch.BatchID != "" {
 				if _, ok := seenEOFs[batch.BatchID]; ok {
+					log.Printf("[node] duplicate EOF received — ignoring: client=%s batch_id=%s", batch.ClientID, batch.BatchID)
 					ack()
 					return
 				}
