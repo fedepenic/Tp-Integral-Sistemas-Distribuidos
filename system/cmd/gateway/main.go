@@ -211,6 +211,11 @@ func handleClient(conn net.Conn, producer middleware.Middleware, tracker *client
 			log.Printf("[client %s] accounts batch of %d (total: %d)", clientID, len(batch.Accounts), totalAccounts)
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish accounts: %v", clientID, err)
+				return
+			}
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send accounts ack: %v", clientID, err)
+				return
 			}
 
 		case protocol.BatchTypeTransactions:
@@ -218,21 +223,34 @@ func handleClient(conn net.Conn, producer middleware.Middleware, tracker *client
 			log.Printf("[client %s] transactions batch of %d (total: %d)", clientID, len(batch.Transactions), totalTransactions)
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish transactions: %v", clientID, err)
+				return
+			}
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send transactions ack: %v", clientID, err)
+				return
 			}
 
 		case protocol.BatchTypeEOF:
 			log.Printf("[client %s] finished — accounts=%d transactions=%d", clientID, totalAccounts, totalTransactions)
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish EOF: %v", clientID, err)
+				return
 			}
 			tracker.markCompleted(clientID)
 			completed = true
-			if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeACK}); err != nil {
-				log.Printf("client %s send ack: %v", clientID, err)
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send EOF ack: %v", clientID, err)
 			}
 			return
 		}
 	}
+}
+
+func sendACK(conn net.Conn, batch protocol.Batch) error {
+	return protocol.Send(conn, protocol.Batch{
+		Type:    protocol.BatchTypeACK,
+		BatchID: batch.BatchID,
+	})
 }
 
 func publish(producer middleware.Middleware, batch protocol.Batch) error {

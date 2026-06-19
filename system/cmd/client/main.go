@@ -38,13 +38,12 @@ func main() {
 		log.Fatalf("sending transactions: %v", err)
 	}
 
-	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: eofBatchID(clientID)}); err != nil {
+	eofID := eofBatchID(clientID)
+	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: eofID}); err != nil {
 		log.Fatalf("sending EOF: %v", err)
 	}
-
-	ack, err := protocol.Receive(conn)
-	if err != nil || ack.Type != protocol.BatchTypeACK {
-		log.Fatalf("waiting for ack: %v", err)
+	if err := waitForACK(conn, eofID); err != nil {
+		log.Fatalf("waiting for EOF ack: %v", err)
 	}
 
 	log.Println("all data sent and acknowledged")
@@ -118,12 +117,16 @@ func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) er
 }
 
 func flushAccounts(conn net.Conn, accounts []protocol.Account, clientID string, batchIndex int) error {
-	return protocol.Send(conn, protocol.Batch{
+	batchID := deterministicBatchID(clientID, protocol.BatchTypeAccounts, batchIndex)
+	if err := protocol.Send(conn, protocol.Batch{
 		Type:     protocol.BatchTypeAccounts,
 		ClientID: clientID,
 		Accounts: accounts,
-		BatchID:  deterministicBatchID(clientID, protocol.BatchTypeAccounts, batchIndex),
-	})
+		BatchID:  batchID,
+	}); err != nil {
+		return err
+	}
+	return waitForACK(conn, batchID)
 }
 
 func sendTransactions(conn net.Conn, path string, batchSize int, clientID string) error {
@@ -190,12 +193,30 @@ func sendTransactions(conn net.Conn, path string, batchSize int, clientID string
 }
 
 func flushTransactions(conn net.Conn, txns []protocol.Transaction, clientID string, batchIndex int) error {
-	return protocol.Send(conn, protocol.Batch{
+	batchID := deterministicBatchID(clientID, protocol.BatchTypeTransactions, batchIndex)
+	if err := protocol.Send(conn, protocol.Batch{
 		Type:         protocol.BatchTypeTransactions,
 		ClientID:     clientID,
 		Transactions: txns,
-		BatchID:      deterministicBatchID(clientID, protocol.BatchTypeTransactions, batchIndex),
-	})
+		BatchID:      batchID,
+	}); err != nil {
+		return err
+	}
+	return waitForACK(conn, batchID)
+}
+
+func waitForACK(conn net.Conn, batchID string) error {
+	ack, err := protocol.Receive(conn)
+	if err != nil {
+		return fmt.Errorf("receive ack for batch %s: %w", batchID, err)
+	}
+	if ack.Type != protocol.BatchTypeACK {
+		return fmt.Errorf("expected ack for batch %s, got %s", batchID, ack.Type)
+	}
+	if ack.BatchID != batchID {
+		return fmt.Errorf("expected ack for batch %s, got ack for %s", batchID, ack.BatchID)
+	}
+	return nil
 }
 
 func deterministicBatchID(clientID string, batchType protocol.BatchType, batchIndex int) string {
