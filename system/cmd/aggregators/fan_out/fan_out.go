@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -20,6 +21,7 @@ type fanOut struct {
 	outputMW         middleware.Middleware
 	outputKeyPrefix  string
 	outputPartitions int
+	deduper          *dedup.BatchDeduplicator
 }
 
 func newFanOut(outputMW middleware.Middleware) *fanOut {
@@ -28,10 +30,18 @@ func newFanOut(outputMW middleware.Middleware) *fanOut {
 		outputMW:         outputMW,
 		outputKeyPrefix:  config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinersg"),
 		outputPartitions: config.MustEnvInt("OUTPUT_PARTITIONS"),
+		deduper:          dedup.New(),
 	}
 }
 
 func (f *fanOut) process(batch protocol.Batch) (protocol.Batch, bool) {
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if f.deduper.Seen(batch.BatchID) {
+			log.Printf("[fan_out] discarded duplicate batch client=%s id=%s", batch.ClientID, batch.BatchID)
+			return protocol.Batch{}, false
+		}
+	}
+
 	if batch.Type == protocol.BatchTypeEOF {
 		f.flush(batch.ClientID)
 		return batch, true
@@ -57,6 +67,10 @@ func (f *fanOut) process(batch protocol.Batch) (protocol.Batch, bool) {
 			byFrom[fromKey] = entry
 		}
 		entry.refs = append(entry.refs, accountRef{bank: tx.ToBank, account: tx.ToAccount})
+	}
+
+	if batch.BatchID != "" {
+		f.deduper.Mark(batch.BatchID)
 	}
 	return protocol.Batch{}, false
 }

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -32,6 +33,7 @@ type reporter struct {
 	outputDir           string
 	writers             map[string]*queryWriter // key: clientID + "/" + queryID
 	disconnectedClients map[string]bool
+	deduper             *dedup.BatchDeduplicator
 }
 
 func newReporter(outputDir string) *reporter {
@@ -39,6 +41,7 @@ func newReporter(outputDir string) *reporter {
 		outputDir:           outputDir,
 		writers:             make(map[string]*queryWriter),
 		disconnectedClients: make(map[string]bool),
+		deduper:             dedup.New(),
 	}
 }
 
@@ -188,6 +191,14 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		log.Printf("reporter: discarding batch for disconnected client %s query %s", batch.ClientID, batch.QueryID)
 		ack()
 		return
+	}
+
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if r.deduper.CheckAndMark(batch.BatchID) {
+			log.Printf("reporter: duplicate batch %s (client=%s query=%s)", batch.BatchID, batch.ClientID, batch.QueryID)
+			ack()
+			return
+		}
 	}
 
 	if batch.Type == protocol.BatchTypeEOF {
