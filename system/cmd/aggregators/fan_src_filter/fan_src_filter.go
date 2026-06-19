@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -22,6 +24,7 @@ type fanSrcFilter struct {
 	foPartitions int
 	fiKeyPrefix  string
 	fiPartitions int
+	dedup        *dedup.BatchDeduplicator
 }
 
 func newFanSrcFilter(
@@ -37,16 +40,20 @@ func newFanSrcFilter(
 		foPartitions: foPartitions,
 		fiKeyPrefix:  fiKeyPrefix,
 		fiPartitions: fiPartitions,
+		dedup:        dedup.New(),
 	}
 }
 
-func init() {
-	_ = config.EnvOrDefault // silence unused import if needed
-}
-
 func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
+	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+		if f.dedup.Seen(batch.BatchID) {
+			log.Printf("[fan_src_filter] duplicate batch: %s", batch.BatchID)
+			return protocol.Batch{}, false
+		}
+	}
+
 	if batch.Type == protocol.BatchTypeEOF {
-		f.flush(batch.ClientID)
+		f.flush(batch.ClientID, batch.BatchID)
 		return batch, true
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
@@ -73,10 +80,14 @@ func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
 		entry.distinctTo[tx.ToBank+"|"+tx.ToAccount] = struct{}{}
 		entry.transactions = append(entry.transactions, tx)
 	}
+
+	if batch.BatchID != "" {
+		f.dedup.Mark(batch.BatchID)
+	}
 	return protocol.Batch{}, false
 }
 
-func (f *fanSrcFilter) flush(clientID string) {
+func (f *fanSrcFilter) flush(clientID string, parentBatchID string) {
 	byFrom, ok := f.state[clientID]
 	if !ok {
 		return
@@ -86,7 +97,14 @@ func (f *fanSrcFilter) flush(clientID string) {
 	foPart := make(map[int][]protocol.Transaction)
 	fiPart := make(map[int][]protocol.Transaction)
 
-	for _, entry := range byFrom {
+	fromKeys := make([]string, 0, len(byFrom))
+	for k := range byFrom {
+		fromKeys = append(fromKeys, k)
+	}
+	sort.Strings(fromKeys)
+
+	for _, key := range fromKeys {
+		entry := byFrom[key]
 		if len(entry.distinctTo) <= minDistinctDests {
 			continue
 		}
@@ -98,13 +116,8 @@ func (f *fanSrcFilter) flush(clientID string) {
 		}
 	}
 
-	qualifying := 0
-	for _, entry := range byFrom {
-		if len(entry.distinctTo) > minDistinctDests {
-			qualifying++
-		}
-	}
-	log.Printf("[fan_src_filter] flush client=%s total_sources=%d qualifying=%d", clientID, len(byFrom), qualifying)
+	log.Printf("[fan_src_filter] flush client=%s total_sources=%d parent_batch=%s",
+		clientID, len(byFrom), parentBatchID)
 
 	sendPartitioned(f.outFOMW, clientID, foPart, f.foKeyPrefix)
 	sendPartitioned(f.outFIMW, clientID, fiPart, f.fiKeyPrefix)
@@ -114,13 +127,21 @@ func (f *fanSrcFilter) flush(clientID string) {
 }
 
 func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[int][]protocol.Transaction, keyPrefix string) {
-	for p, txns := range partitioned {
+	parts := make([]int, 0, len(partitioned))
+	instance := config.MustEnvInt("INSTANCE_ID")
+	for p := range partitioned {
+		parts = append(parts, p)
+	}
+	sort.Ints(parts)
+
+	for _, p := range parts {
+		txns := partitioned[p]
 		key := worker.RoutingKey(keyPrefix, p)
 		out := protocol.Batch{
 			Type:         protocol.BatchTypeTransactions,
 			ClientID:     clientID,
 			Transactions: txns,
-			BatchID:      id.New(),
+			BatchID:      id.Aggregator("fan_src_filter", clientID, p, 0, instance),
 		}
 		data, err := json.Marshal(out)
 		if err != nil {
@@ -134,14 +155,19 @@ func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[
 }
 
 func sendEOF(mw middleware.Middleware, clientID, keyPrefix string, partitions int) {
-	eof := protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: id.New()}
-	data, err := json.Marshal(eof)
-	if err != nil {
-		log.Printf("[fan_src_filter] marshal EOF: %v", err)
-		return
-	}
+	instance := config.MustEnvInt("INSTANCE_ID")
 	for i := 0; i < partitions; i++ {
 		key := worker.RoutingKey(keyPrefix, i)
+		eof := protocol.Batch{
+			Type:     protocol.BatchTypeEOF,
+			ClientID: clientID,
+			BatchID:  id.AggregatorEOF("fan_src_filter", instance, clientID),
+		}
+		data, err := json.Marshal(eof)
+		if err != nil {
+			log.Printf("[fan_src_filter] marshal EOF key=%s: %v", key, err)
+			continue
+		}
 		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
 			log.Printf("[fan_src_filter] send EOF key=%s: %v", key, err)
 		}

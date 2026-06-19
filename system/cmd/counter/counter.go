@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
@@ -14,10 +16,19 @@ import (
 // the EOF. node.Node handles upstream EOF counting before calling this.
 func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 	txnCounts := make(map[string]int64)
+	deduper := dedup.New()
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
+		if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+			if deduper.Seen(batch.BatchID) {
+				log.Printf("[counter] duplicate batch: %s", batch.BatchID)
+				return protocol.Batch{}, false
+			}
+		}
+
 		if batch.Type == protocol.BatchTypeTransactions {
 			txnCounts[batch.ClientID] += int64(len(batch.Transactions))
+			deduper.Mark(batch.BatchID)
 			return protocol.Batch{}, false
 		}
 
@@ -28,12 +39,17 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 
 			// Send the count batch directly; the node will send the EOF via its normal path.
 			sendBatch(outputMW, protocol.Batch{
+				BatchID:  id.Aggregator("counter", batch.ClientID, 0, 0, 1),
 				Type:     protocol.BatchTypeCount,
 				ClientID: batch.ClientID,
 				Count:    total,
 			})
 
-			return protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: batch.ClientID}, true
+			return protocol.Batch{
+				Type:     protocol.BatchTypeEOF,
+				ClientID: batch.ClientID,
+				BatchID:  id.AggregatorEOF("counter", 1, batch.ClientID),
+			}, true
 		}
 
 		return protocol.Batch{}, false
