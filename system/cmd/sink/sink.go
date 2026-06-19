@@ -12,11 +12,10 @@ func newProcess(queryID string) node.ProcessFunc {
 	deduper := dedup.New()
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
-			if deduper.Seen(batch.BatchID) {
+			if deduper.CheckAndMark(batch.BatchID) {
 				log.Printf("[sink_%s] duplicate batch: %s", queryID, batch.BatchID)
 				return protocol.Batch{}, false
 			}
-			deduper.Mark(batch.BatchID)
 		}
 		batch.QueryID = queryID
 		if batch.Type == protocol.BatchTypeEOF {
