@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/health"
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
@@ -39,7 +38,7 @@ func main() {
 		log.Fatalf("sending transactions: %v", err)
 	}
 
-	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: id.New()}); err != nil {
+	if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeEOF, ClientID: clientID, BatchID: eofBatchID(clientID)}); err != nil {
 		log.Fatalf("sending EOF: %v", err)
 	}
 
@@ -79,6 +78,7 @@ func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) er
 
 	var buf []protocol.Account
 	total := 0
+	batchIndex := 0
 
 	for {
 		row, err := r.Read()
@@ -99,15 +99,16 @@ func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) er
 			EntityName:    row[4],
 		})
 		if len(buf) >= batchSize {
-			if err := flushAccounts(conn, buf, clientID); err != nil {
+			if err := flushAccounts(conn, buf, clientID, batchIndex); err != nil {
 				return err
 			}
+			batchIndex++
 			total += len(buf)
 			buf = buf[:0]
 		}
 	}
 	if len(buf) > 0 {
-		if err := flushAccounts(conn, buf, clientID); err != nil {
+		if err := flushAccounts(conn, buf, clientID, batchIndex); err != nil {
 			return err
 		}
 		total += len(buf)
@@ -116,8 +117,13 @@ func sendAccounts(conn net.Conn, path string, batchSize int, clientID string) er
 	return nil
 }
 
-func flushAccounts(conn net.Conn, accounts []protocol.Account, clientID string) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeAccounts, ClientID: clientID, Accounts: accounts, BatchID: id.New()})
+func flushAccounts(conn net.Conn, accounts []protocol.Account, clientID string, batchIndex int) error {
+	return protocol.Send(conn, protocol.Batch{
+		Type:     protocol.BatchTypeAccounts,
+		ClientID: clientID,
+		Accounts: accounts,
+		BatchID:  deterministicBatchID(clientID, protocol.BatchTypeAccounts, batchIndex),
+	})
 }
 
 func sendTransactions(conn net.Conn, path string, batchSize int, clientID string) error {
@@ -134,6 +140,7 @@ func sendTransactions(conn net.Conn, path string, batchSize int, clientID string
 
 	var buf []protocol.Transaction
 	total := 0
+	batchIndex := 0
 
 	for {
 		row, err := r.Read()
@@ -164,15 +171,16 @@ func sendTransactions(conn net.Conn, path string, batchSize int, clientID string
 			IsLaundering:      isLaundering,
 		})
 		if len(buf) >= batchSize {
-			if err := flushTransactions(conn, buf, clientID); err != nil {
+			if err := flushTransactions(conn, buf, clientID, batchIndex); err != nil {
 				return err
 			}
+			batchIndex++
 			total += len(buf)
 			buf = buf[:0]
 		}
 	}
 	if len(buf) > 0 {
-		if err := flushTransactions(conn, buf, clientID); err != nil {
+		if err := flushTransactions(conn, buf, clientID, batchIndex); err != nil {
 			return err
 		}
 		total += len(buf)
@@ -181,8 +189,21 @@ func sendTransactions(conn net.Conn, path string, batchSize int, clientID string
 	return nil
 }
 
-func flushTransactions(conn net.Conn, txns []protocol.Transaction, clientID string) error {
-	return protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeTransactions, ClientID: clientID, Transactions: txns, BatchID: id.New()})
+func flushTransactions(conn net.Conn, txns []protocol.Transaction, clientID string, batchIndex int) error {
+	return protocol.Send(conn, protocol.Batch{
+		Type:         protocol.BatchTypeTransactions,
+		ClientID:     clientID,
+		Transactions: txns,
+		BatchID:      deterministicBatchID(clientID, protocol.BatchTypeTransactions, batchIndex),
+	})
+}
+
+func deterministicBatchID(clientID string, batchType protocol.BatchType, batchIndex int) string {
+	return fmt.Sprintf("client:%s:%s:%d", clientID, batchType, batchIndex)
+}
+
+func eofBatchID(clientID string) string {
+	return fmt.Sprintf("client:%s:eof", clientID)
 }
 
 func envOrDefault(key, def string) string {
