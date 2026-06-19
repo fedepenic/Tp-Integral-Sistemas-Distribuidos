@@ -68,6 +68,7 @@ func (n *Node) UpstreamCount() int { return n.upstreamCount }
 // with the EOF only after upstreamCount EOFs have arrived for that client.
 func (n *Node) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 	eofCounts := make(map[string]int)
+	seenEOFs := make(map[string]struct{})
 
 	if err := inputMW.StartConsuming(func(msg middleware.Message, ack func(), nack func()) {
 		var batch protocol.Batch
@@ -78,6 +79,13 @@ func (n *Node) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 		}
 
 		if batch.Type == protocol.BatchTypeEOF {
+			if batch.BatchID != "" {
+				if _, ok := seenEOFs[batch.BatchID]; ok {
+					ack()
+					return
+				}
+				seenEOFs[batch.BatchID] = struct{}{}
+			}
 			eofCounts[batch.ClientID]++
 			if eofCounts[batch.ClientID] < n.upstreamCount {
 				ack()

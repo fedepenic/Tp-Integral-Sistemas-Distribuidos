@@ -64,6 +64,10 @@ type Scalable struct {
 	// EOFs and peer coordination would multiply the count.
 	selfOnly bool
 
+	// seenEOFs guards against duplicate EOF broadcasts under at-least-once
+	// delivery. Keyed by BatchID. Under mu.
+	seenEOFs map[string]struct{}
+
 	// single-sided EOF counting (New / NewExclusive)
 	eofCount map[string]int
 
@@ -86,6 +90,7 @@ func New(name string) *Scalable {
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		seenEOFs:      make(map[string]struct{}),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -105,6 +110,7 @@ func NewExclusive(name string) *Scalable {
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		seenEOFs:      make(map[string]struct{}),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -125,6 +131,7 @@ func NewJoin(name string, leftUpstream, rightUpstream int, classify func(protoco
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		seenEOFs:      make(map[string]struct{}),
 		leftUpstream:  leftUpstream,
 		rightUpstream: rightUpstream,
 		eofLeftCount:  make(map[string]int),
@@ -217,6 +224,23 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			s.globalPending--
 			s.cond.Broadcast()
 			s.mu.Unlock()
+
+			// Tag the broadcast with this instance's ID so peer instances can
+			// deduplicate by BatchID without conflating broadcasts from different
+			// instances. This also ensures the forwarded EOF carries a per-instance
+			// unique BatchID downstream.
+			if batch.BatchID != "" {
+				tagged := batch
+				tagged.BatchID = fmt.Sprintf("eof:%s:%d:%s", s.name, s.instanceID, batch.BatchID)
+				taggedBody, err := json.Marshal(tagged)
+				if err != nil {
+					log.Printf("[%s] marshal tagged EOF: %v", s.name, err)
+					nack()
+					return
+				}
+				msg.Body = string(taggedBody)
+			}
+
 			if err := eofBroadcast.Send(msg); err != nil {
 				log.Printf("[%s] broadcast EOF client=%s: %v", s.name, batch.ClientID, err)
 				nack()
@@ -292,9 +316,19 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 
 		clientID := batch.ClientID
 
+		// Guard against duplicate EOF broadcasts under at-least-once delivery.
+		s.mu.Lock()
+		if batch.BatchID != "" {
+			if _, ok := s.seenEOFs[batch.BatchID]; ok {
+				s.mu.Unlock()
+				ack()
+				return
+			}
+			s.seenEOFs[batch.BatchID] = struct{}{}
+		}
+
 		// Count EOFs — single-sided or two-sided depending on mode.
 		var ready bool
-		s.mu.Lock()
 		if s.leftUpstream > 0 {
 			if s.classifyEOF(batch) {
 				s.eofLeftCount[clientID]++
