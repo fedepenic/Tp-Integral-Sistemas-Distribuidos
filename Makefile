@@ -8,7 +8,7 @@ all-notebook-local: clean-output-local generate-inputs-local run-notebook-local
 
 all-system: build clean-output generate-compose generate-inputs run-system
 
-all-system-demo: build generate-compose run-system
+all-system-demo: build generate-compose clean-client-progress run-system
 
 clean-output:
 	docker run --rm \
@@ -17,6 +17,17 @@ clean-output:
 
 clean-output-local:
 	$(PYTHON) scripts/clean_output.py
+
+clean-client-progress:
+	mkdir -p input
+	docker run --rm \
+		-v $(PWD)/scripts:/app/scripts \
+		-v $(PWD)/input:/app/input \
+		money-laundering python scripts/clean_client_progress.py
+
+clean-client-progress-local:
+	mkdir -p input
+	$(PYTHON) scripts/clean_client_progress.py
 
 compare:
 	docker run --rm \
