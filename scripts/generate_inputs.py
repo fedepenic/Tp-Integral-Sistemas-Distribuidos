@@ -3,12 +3,20 @@ import os
 import shutil
 
 sample_pct        = float(os.environ.get('DATASET_PERCENTAGE', 10))
+dataset           = os.environ.get('DATASET', 'medium').lower()
+dataset_label     = {
+    'small': 'Small',
+    'medium': 'Medium',
+}.get(dataset)
+
+if dataset_label is None:
+    raise ValueError("DATASET must be one of: small, medium")
 
 # Use N_WORKERS override if set, otherwise use N_CLIENTS
 n_workers = int(os.environ.get('N_WORKERS', 0))
 n_clients = n_workers if n_workers > 0 else int(os.environ.get('N_CLIENTS', 5))
-transactions_file = os.environ.get('TRANSACTIONS_FILE', 'LI-Medium_Trans.csv')
-accounts_file     = os.environ.get('ACCOUNTS_FILE', 'LI-Medium_accounts.csv')
+transactions_file = os.environ.get('TRANSACTIONS_FILE', f'LI-{dataset_label}_Trans.csv')
+accounts_file     = os.environ.get('ACCOUNTS_FILE', f'LI-{dataset_label}_accounts.csv')
 
 if os.path.exists("input"):
     for entry in os.scandir("input"):

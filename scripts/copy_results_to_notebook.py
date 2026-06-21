@@ -7,12 +7,15 @@ VALID_SIZES = {"small", "medium"}
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in VALID_SIZES:
+    size = sys.argv[1] if len(sys.argv) == 2 else os.environ.get("DATASET", "")
+    size = size.lower()
+
+    if size not in VALID_SIZES:
         valid_sizes = ", ".join(sorted(VALID_SIZES))
         print(f"Usage: python scripts/copy_results_to_notebook.py <{valid_sizes}>")
+        print("Or set DATASET in .env.")
         sys.exit(1)
 
-    size = sys.argv[1]
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     source_dir = os.path.join(base_dir, "data", f"results_100_{size}")
     notebook_dir = os.path.join(base_dir, "output", "notebook")

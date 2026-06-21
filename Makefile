@@ -1,4 +1,8 @@
 PYTHON ?= python3.11
+
+-include .env
+export
+
 DATASET ?= small
 DATASET_ARG = $(or $(word 2,$(MAKECMDGOALS)),$(DATASET))
 

@@ -10,12 +10,15 @@ FILES_BY_SIZE = {
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in FILES_BY_SIZE:
+    size = sys.argv[1] if len(sys.argv) == 2 else os.environ.get("DATASET", "")
+    size = size.lower()
+
+    if size not in FILES_BY_SIZE:
         valid_sizes = ", ".join(sorted(FILES_BY_SIZE))
         print(f"Usage: python scripts/copy_inputs_to_clients.py <{valid_sizes}>")
+        print("Or set DATASET in .env.")
         sys.exit(1)
 
-    size = sys.argv[1]
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(base_dir, "data", f"input_100_{size}")
     input_dir = os.path.join(base_dir, "input")
