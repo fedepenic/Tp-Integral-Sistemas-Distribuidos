@@ -17,9 +17,13 @@ def main():
 
     size = sys.argv[1]
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_dir = os.path.join(base_dir, "data")
+    data_dir = os.path.join(base_dir, "data", f"input_100_{size}")
     input_dir = os.path.join(base_dir, "input")
     source_files = [os.path.join(data_dir, file_name) for file_name in FILES_BY_SIZE[size]]
+
+    if not os.path.isdir(data_dir):
+        print(f"ERROR: {data_dir} not found.")
+        sys.exit(1)
 
     for source_file in source_files:
         if not os.path.isfile(source_file):
