@@ -125,6 +125,7 @@ func main() {
 	outputQueue := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
 	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
 	outputDir := envOrDefault("OUTPUT_DIR", "/output")
+	eofStorePath := envOrDefault("GATEWAY_EOF_STORE_FILE", outputDir+"/gateway_eofs.log")
 
 	rabbitPort, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -147,6 +148,10 @@ func main() {
 
 	r := newReporter(outputDir)
 	tracker := newClientTracker(r)
+	eofs, err := newEOFStore(eofStorePath)
+	if err != nil {
+		log.Fatalf("load EOF store: %v", err)
+	}
 
 	go func() {
 		if err := reportsConsumer.StartConsuming(r.handle); err != nil {
@@ -168,11 +173,11 @@ func main() {
 			continue
 		}
 		log.Printf("client connected: %s", conn.RemoteAddr())
-		go handleClient(conn, producer, tracker)
+		go handleClient(conn, producer, tracker, eofs)
 	}
 }
 
-func handleClient(conn net.Conn, producer middleware.Middleware, tracker *clientTracker) {
+func handleClient(conn net.Conn, producer middleware.Middleware, tracker *clientTracker, eofs *eofStore) {
 	defer conn.Close()
 
 	clientID := "unknown"
@@ -232,9 +237,19 @@ func handleClient(conn net.Conn, producer middleware.Middleware, tracker *client
 
 		case protocol.BatchTypeEOF:
 			log.Printf("[client %s] finished — accounts=%d transactions=%d", clientID, totalAccounts, totalTransactions)
-			if err := publish(producer, batch); err != nil {
-				log.Printf("[client %s] publish EOF: %v", clientID, err)
+			eofID := batch.BatchID
+			if eofID == "" {
+				eofID = "client:" + clientID + ":eof"
+			}
+			published, err := eofs.withUnseen(eofID, func() error {
+				return publish(producer, batch)
+			})
+			if err != nil {
+				log.Printf("[client %s] publish/persist EOF: %v", clientID, err)
 				return
+			}
+			if !published {
+				log.Printf("[client %s] duplicate EOF %s — acking without republishing", clientID, eofID)
 			}
 			tracker.markCompleted(clientID)
 			completed = true
