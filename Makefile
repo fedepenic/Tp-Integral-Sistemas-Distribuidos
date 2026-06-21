@@ -8,7 +8,7 @@ all-notebook-local: clean-output-local generate-inputs-local run-notebook-local
 
 all-system: build clean-output generate-compose generate-inputs run-system
 
-all-system-demo: build generate-compose clean-client-progress run-system
+all-system-demo: build clean-output generate-compose clean-client-progress copy-results-to-notebook-local medium run-system
 
 clean-output:
 	docker run --rm \
@@ -33,6 +33,19 @@ compare:
 	docker run --rm \
 		-v $(PWD)/output:/app/output \
 		money-laundering python scripts/compare_outputs.py $(word 2,$(MAKECMDGOALS))
+
+copy-results-to-notebook:
+	mkdir -p output/notebook
+	docker run --rm \
+		--env-file .env \
+		-v $(PWD)/data:/app/data \
+		-v $(PWD)/output:/app/output \
+		-v $(PWD)/scripts:/app/scripts \
+		money-laundering python scripts/copy_results_to_notebook.py $(word 2,$(MAKECMDGOALS))
+
+copy-results-to-notebook-local:
+	mkdir -p output/notebook
+	set -a && . ./.env && $(PYTHON) scripts/copy_results_to_notebook.py $(word 2,$(MAKECMDGOALS))
 
 build:
 	docker build -t money-laundering .
