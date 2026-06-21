@@ -415,6 +415,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines = ["services:"]
     watcher_enabled = get_bool_env(env, "ENABLE_WATCHER", True)
     watcher_count = get_watcher_count(env)
+    client_disconnect_timeout = env.get("CLIENT_DISCONNECT_TIMEOUT", "60s")
     # Collect (service_name, port) for every long-running service so the watcher
     # can be configured with the full list at the end of this function.
     watcher_targets: list[tuple[str, int]] = [
@@ -456,6 +457,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append(f"      - OUTPUT_QUEUE=raw_transactions")
     lines.append(f"      - REPORTS_QUEUE=reports")
     lines.append(f"      - OUTPUT_DIR=/output/system")
+    lines.append(f"      - CLIENT_DISCONNECT_TIMEOUT={client_disconnect_timeout}")
     append_watcher_health_env(lines, watcher_enabled)
     lines.append(f"    volumes:")
     lines.append(f"      - ../output:/output")

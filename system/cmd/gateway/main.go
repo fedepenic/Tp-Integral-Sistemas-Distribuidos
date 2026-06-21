@@ -15,7 +15,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-const clientDisconnectTimeout = 60 * time.Second
+const defaultClientDisconnectTimeout time.Duration = 60 * time.Second
 
 type clientStatus struct {
 	timer     *time.Timer
@@ -24,15 +24,17 @@ type clientStatus struct {
 }
 
 type clientTracker struct {
-	mu       sync.Mutex
-	clients  map[string]*clientStatus
-	reporter *reporter
+	mu                      sync.Mutex
+	clients                 map[string]*clientStatus
+	reporter                *reporter
+	clientDisconnectTimeout time.Duration
 }
 
-func newClientTracker(reporter *reporter) *clientTracker {
+func newClientTracker(reporter *reporter, clientDisconnectTimeout time.Duration) *clientTracker {
 	return &clientTracker{
-		clients:  make(map[string]*clientStatus),
-		reporter: reporter,
+		clients:                 make(map[string]*clientStatus),
+		reporter:                reporter,
+		clientDisconnectTimeout: clientDisconnectTimeout,
 	}
 }
 
@@ -79,10 +81,10 @@ func (t *clientTracker) markDisconnected(clientID string) {
 	if status.timer != nil {
 		status.timer.Stop()
 	}
-	status.timer = time.AfterFunc(clientDisconnectTimeout, func() {
+	status.timer = time.AfterFunc(t.clientDisconnectTimeout, func() {
 		t.markAbandoned(clientID)
 	})
-	log.Printf("client %s disconnected before EOF; waiting %s before marking as abandoned", clientID, clientDisconnectTimeout)
+	log.Printf("client %s disconnected before EOF; waiting %s before marking as abandoned", clientID, t.clientDisconnectTimeout)
 }
 
 func (t *clientTracker) markAbandoned(clientID string) {
@@ -96,7 +98,7 @@ func (t *clientTracker) markAbandoned(clientID string) {
 	status.timer = nil
 	t.mu.Unlock()
 
-	log.Printf("client %s abandoned after %s without reconnecting", clientID, clientDisconnectTimeout)
+	log.Printf("client %s abandoned after %s without reconnecting", clientID, t.clientDisconnectTimeout)
 	t.reporter.markClientDisconnected(clientID)
 }
 
@@ -116,6 +118,16 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
+func envDurationOrDefault(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		log.Printf("invalid %s %q, using default %s", key, v, def)
+	}
+	return def
+}
+
 func main() {
 	health.StartIfEnabled()
 
@@ -126,6 +138,7 @@ func main() {
 	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
 	outputDir := envOrDefault("OUTPUT_DIR", "/output")
 	eofStorePath := envOrDefault("GATEWAY_EOF_STORE_FILE", outputDir+"/gateway_eofs.log")
+	clientDisconnectTimeout := envDurationOrDefault("CLIENT_DISCONNECT_TIMEOUT", defaultClientDisconnectTimeout)
 
 	rabbitPort, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -147,7 +160,7 @@ func main() {
 	defer reportsConsumer.Close()
 
 	r := newReporter(outputDir)
-	tracker := newClientTracker(r)
+	tracker := newClientTracker(r, clientDisconnectTimeout)
 	eofs, err := newEOFStore(eofStorePath)
 	if err != nil {
 		log.Fatalf("load EOF store: %v", err)
