@@ -73,6 +73,11 @@ type Scalable struct {
 	eofLeftCount  map[string]int
 	eofRightCount map[string]int
 	classifyEOF   func(protocol.Batch) bool // true = left, false = right
+
+	// eofCompleted tracks clients whose EOF has already been forwarded downstream.
+	// Any broadcast received after forwarding is a duplicate (from redelivery or
+	// cascade) and must be ignored to prevent multiple forwards.
+	eofCompleted map[string]struct{}
 }
 
 // New reads instance identity and connection settings from the environment.
@@ -86,6 +91,7 @@ func New(name string) *Scalable {
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		eofCompleted:  make(map[string]struct{}),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -105,6 +111,7 @@ func NewExclusive(name string) *Scalable {
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		eofCompleted:  make(map[string]struct{}),
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
@@ -125,6 +132,7 @@ func NewJoin(name string, leftUpstream, rightUpstream int, classify func(protoco
 		clientPending: make(map[string]int),
 		eofCount:      make(map[string]int),
 		eofInFlight:   make(map[string]bool),
+		eofCompleted:  make(map[string]struct{}),
 		leftUpstream:  leftUpstream,
 		rightUpstream: rightUpstream,
 		eofLeftCount:  make(map[string]int),
@@ -215,6 +223,14 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		if batch.Type == protocol.BatchTypeEOF {
 			s.mu.Lock()
 			s.globalPending--
+			// If this client's EOF was already forwarded, this is a stale data
+			// EOF (redelivery) — no need to broadcast it.
+			if _, done := s.eofCompleted[batch.ClientID]; done {
+				s.cond.Broadcast()
+				s.mu.Unlock()
+				ack()
+				return
+			}
 			s.cond.Broadcast()
 			s.mu.Unlock()
 
@@ -293,9 +309,27 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 
 		clientID := batch.ClientID
 
+		s.mu.Lock()
+		// If this client's EOF was already forwarded downstream, ignore any
+		// late or duplicate broadcasts (at-least-once redelivery, cascade).
+		if _, done := s.eofCompleted[clientID]; done {
+			s.mu.Unlock()
+			ack()
+			return
+		}
+		// If another goroutine is already forwarding this client's EOF, wait
+		// for it to finish then treat this as a duplicate.
+		for s.eofInFlight[clientID] {
+			s.cond.Wait()
+		}
+		if _, done := s.eofCompleted[clientID]; done {
+			s.mu.Unlock()
+			ack()
+			return
+		}
+
 		// Count EOFs — single-sided or two-sided depending on mode.
 		var ready bool
-		s.mu.Lock()
 		if s.leftUpstream > 0 {
 			if s.classifyEOF(batch) {
 				s.eofLeftCount[clientID]++
@@ -313,14 +347,16 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 			ready = count >= s.upstreamCount
 			log.Printf("[%s] EOF broadcast client=%s (%d/%d)", s.name, clientID, count, s.upstreamCount)
 		}
-		s.mu.Unlock()
 
 		if !ready {
+			s.mu.Unlock()
 			ack()
 			return
 		}
 
-		s.mu.Lock()
+		// Hold the lock through drain + eofInFlight to close the window
+		// where another broadcast for the same client could arrive between
+		// the readiness check and the forward preparation.
 		for s.globalPending > 0 || s.clientPending[clientID] > 0 {
 			s.cond.Wait()
 		}
@@ -344,6 +380,7 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, clientID)
 				s.mu.Lock()
 				delete(s.eofInFlight, clientID)
+				s.eofCompleted[clientID] = struct{}{}
 				s.cond.Broadcast()
 				s.mu.Unlock()
 				ack()
@@ -403,6 +440,7 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		}
 		delete(s.clientPending, clientID)
 		delete(s.eofInFlight, clientID)
+		s.eofCompleted[clientID] = struct{}{}
 		s.cond.Broadcast()
 		s.mu.Unlock()
 
