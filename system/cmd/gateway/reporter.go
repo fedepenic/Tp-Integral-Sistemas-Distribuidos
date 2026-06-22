@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,6 +21,8 @@ const disconnectedMessage = "Client has been disconnected"
 type queryWriter struct {
 	file          *os.File
 	csv           *csv.Writer
+	finalPath     string
+	tmpPath       string
 	headerWritten bool
 	seenAccounts  map[string]bool // for deduplication (Q4)
 }
@@ -33,6 +36,7 @@ type reporter struct {
 	outputDir           string
 	writers             map[string]*queryWriter // key: clientID + "/" + queryID
 	disconnectedClients map[string]bool
+	seenAccounts        map[string]map[string]bool // key: clientID + "/" + queryID
 	deduper             *dedup.BatchDeduplicator
 }
 
@@ -41,6 +45,7 @@ func newReporter(outputDir string) *reporter {
 		outputDir:           outputDir,
 		writers:             make(map[string]*queryWriter),
 		disconnectedClients: make(map[string]bool),
+		seenAccounts:        make(map[string]map[string]bool),
 		deduper:             dedup.New(),
 	}
 }
@@ -57,25 +62,43 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	}
 
 	path := filepath.Join(dir, "query_"+queryID+".csv")
+	tmpPath := path + ".tmp"
 
 	// If the file already exists a previous EOF closed it and late-arriving
-	// batches are about to be appended. Open in append mode so we don't
-	// truncate the data that was already written.
+	// batches are about to be appended. Copy it to the temp output first so
+	// the final CSV is replaced only when the updated file is complete.
 	_, statErr := os.Stat(path)
 	alreadyExists := statErr == nil
+	if alreadyExists {
+		if err := copyFile(path, tmpPath); err != nil {
+			return nil, fmt.Errorf("copy output file %s to %s: %w", path, tmpPath, err)
+		}
+	}
 
 	var f *os.File
 	var err error
 	if alreadyExists {
-		f, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err = os.OpenFile(tmpPath, os.O_APPEND|os.O_WRONLY, 0o644)
 	} else {
-		f, err = os.Create(path)
+		f, err = os.Create(tmpPath)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open output file %s: %w", path, err)
+		return nil, fmt.Errorf("open output file %s: %w", tmpPath, err)
 	}
 
-	w := &queryWriter{file: f, csv: csv.NewWriter(f), headerWritten: alreadyExists}
+	w := &queryWriter{
+		file:          f,
+		csv:           csv.NewWriter(f),
+		finalPath:     path,
+		tmpPath:       tmpPath,
+		headerWritten: alreadyExists,
+	}
+	if queryID == "4" {
+		if r.seenAccounts[key] == nil {
+			r.seenAccounts[key] = make(map[string]bool)
+		}
+		w.seenAccounts = r.seenAccounts[key]
+	}
 	r.writers[key] = w
 	return w, nil
 }
@@ -94,16 +117,25 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 		if !w.headerWritten {
 			writeEmptyHeaders(w, queryID)
 		}
-		w.csv.Flush()
-		w.file.Close()
+		if err := closeAndReplace(w); err != nil {
+			log.Printf("reporter: close empty file for client %s query %s: %v", clientID, queryID, err)
+		}
 		delete(r.writers, key)
 		return
 	}
-	w.csv.Flush()
-	if err := w.file.Close(); err != nil {
+	if err := closeAndReplace(w); err != nil {
 		log.Printf("reporter: close file for client %s query %s: %v", clientID, queryID, err)
 	}
 	delete(r.writers, key)
+}
+
+func (r *reporter) publishWriter(clientID, queryID string, w *queryWriter) error {
+	key := clientID + "/" + queryID
+	if err := closeAndReplace(w); err != nil {
+		return err
+	}
+	delete(r.writers, key)
+	return nil
 }
 
 func (r *reporter) markClientDisconnected(clientID string) {
@@ -122,8 +154,7 @@ func (r *reporter) closeClientWriters(clientID string) {
 		if filepath.Dir(key) != clientID {
 			continue
 		}
-		w.csv.Flush()
-		if err := w.file.Close(); err != nil {
+		if err := closeAndReplace(w); err != nil {
 			log.Printf("reporter: close file for disconnected client %s: %v", clientID, err)
 		}
 		delete(r.writers, key)
@@ -141,9 +172,10 @@ func (r *reporter) writeDisconnectedFiles(clientID string) error {
 
 	for _, queryID := range []string{"1", "2", "3", "4", "5"} {
 		path := filepath.Join(dir, "query_"+queryID+".csv")
-		f, err := os.Create(path)
+		tmpPath := path + ".tmp"
+		f, err := os.Create(tmpPath)
 		if err != nil {
-			return fmt.Errorf("create disconnected query file %s: %w", path, err)
+			return fmt.Errorf("create disconnected query file %s: %w", tmpPath, err)
 		}
 		w := csv.NewWriter(f)
 		w.Write([]string{disconnectedMessage})
@@ -153,6 +185,9 @@ func (r *reporter) writeDisconnectedFiles(clientID string) error {
 		}
 		if err := w.Error(); err != nil {
 			return fmt.Errorf("write disconnected query file %s: %w", path, err)
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return fmt.Errorf("replace disconnected query file %s: %w", path, err)
 		}
 	}
 
@@ -203,6 +238,7 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 
 	if batch.Type == protocol.BatchTypeEOF {
 		r.closeWriter(batch.ClientID, batch.QueryID)
+		delete(r.seenAccounts, batch.ClientID+"/"+batch.QueryID)
 		log.Printf("reporter: query %s complete for client %s", batch.QueryID, batch.ClientID)
 		ack()
 		return
@@ -245,8 +281,46 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		}
 	}
 
-	w.csv.Flush()
+	if err := r.publishWriter(batch.ClientID, batch.QueryID, w); err != nil {
+		log.Printf("reporter: publish file for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
+		nack()
+		return
+	}
 	ack()
+}
+
+func closeAndReplace(w *queryWriter) error {
+	w.csv.Flush()
+	if err := w.csv.Error(); err != nil {
+		_ = w.file.Close()
+		return fmt.Errorf("flush output file %s: %w", w.tmpPath, err)
+	}
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("close output file %s: %w", w.tmpPath, err)
+	}
+	if err := os.Rename(w.tmpPath, w.finalPath); err != nil {
+		return fmt.Errorf("replace output file %s: %w", w.finalPath, err)
+	}
+	return nil
+}
+
+func copyFile(srcPath, dstPath string) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("open source file: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("create destination file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("copy file contents: %w", err)
+	}
+	return nil
 }
 
 func (r *reporter) writeCount(w *queryWriter, count int64) error {
