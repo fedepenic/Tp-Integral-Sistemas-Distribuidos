@@ -415,6 +415,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines = ["services:"]
     watcher_enabled = get_bool_env(env, "ENABLE_WATCHER", True)
     watcher_count = get_watcher_count(env)
+    client_disconnect_timeout = env.get("CLIENT_DISCONNECT_TIMEOUT", "60s")
     # Collect (service_name, port) for every long-running service so the watcher
     # can be configured with the full list at the end of this function.
     watcher_targets: list[tuple[str, int]] = [
@@ -456,6 +457,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     lines.append(f"      - OUTPUT_QUEUE=raw_transactions")
     lines.append(f"      - REPORTS_QUEUE=reports")
     lines.append(f"      - OUTPUT_DIR=/output/system")
+    lines.append(f"      - CLIENT_DISCONNECT_TIMEOUT={client_disconnect_timeout}")
     append_watcher_health_env(lines, watcher_enabled)
     lines.append(f"    volumes:")
     lines.append(f"      - ../output:/output")
@@ -467,8 +469,16 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
     # Clients
     n_clients = get_instance_count(env, "N_CLIENTS", 1)
     batch_size = int(env.get("BATCH_SIZE", 1000))
-    transactions_file = env.get("TRANSACTIONS_FILE", "LI-Medium_Trans.csv")
-    accounts_file = env.get("ACCOUNTS_FILE", "LI-Medium_accounts.csv")
+    dataset = env.get("DATASET", "medium").lower()
+    dataset_labels = {
+        "small": "Small",
+        "medium": "Medium",
+    }
+    if dataset not in dataset_labels:
+        raise ValueError("DATASET must be one of: small, medium")
+    dataset_label = dataset_labels[dataset]
+    transactions_file = env.get("TRANSACTIONS_FILE", f"LI-{dataset_label}_Trans.csv")
+    accounts_file = env.get("ACCOUNTS_FILE", f"LI-{dataset_label}_accounts.csv")
     for i in range(1, n_clients + 1):
         svc_instance = f"client_{i}"
         watcher_targets.append((svc_instance, HEALTH_PORT))

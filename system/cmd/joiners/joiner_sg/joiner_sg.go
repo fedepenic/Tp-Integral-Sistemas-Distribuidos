@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
@@ -19,7 +20,14 @@ const chunkSize = 10_000
 func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPartitions int) node.ProcessFunc {
 	var mu sync.Mutex
 	states := make(map[string]sgState)
+	deduper := dedup.New()
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
+		if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+			if deduper.Seen(batch.BatchID) {
+				return protocol.Batch{}, false
+			}
+		}
+
 		if batch.Type == protocol.BatchTypeEOF {
 			mu.Lock()
 			delete(states, batch.ClientID)
@@ -92,6 +100,7 @@ func newProcess(outputMW middleware.Middleware, outputKeyPrefix string, outputPa
 		}
 
 		states[batch.ClientID] = state
+		deduper.Mark(batch.BatchID)
 
 		log.Printf("[joiner_sg] produced items=%d client=%s", len(items), batch.ClientID)
 		sendChunks(outputMW, batch.ClientID, items, outputKeyPrefix, outputPartitions, batch.BatchID)

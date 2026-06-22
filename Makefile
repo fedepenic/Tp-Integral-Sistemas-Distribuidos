@@ -1,5 +1,11 @@
 PYTHON ?= python3.11
 
+-include .env
+export
+
+DATASET ?= small
+DATASET_ARG = $(or $(word 2,$(MAKECMDGOALS)),$(DATASET))
+
 all: build clean-output generate-compose generate-inputs run-notebook run-system
 
 all-notebook: build clean-output generate-inputs run-notebook
@@ -8,7 +14,7 @@ all-notebook-local: clean-output-local generate-inputs-local run-notebook-local
 
 all-system: build clean-output generate-compose generate-inputs run-system
 
-all-system-demo: build generate-compose run-system
+all-system-demo: build clean-output generate-compose copy-inputs-to-clients copy-results-to-notebook run-system
 
 clean-output:
 	docker run --rm \
@@ -18,10 +24,47 @@ clean-output:
 clean-output-local:
 	$(PYTHON) scripts/clean_output.py
 
+clean-client-progress:
+	mkdir -p input
+	docker run --rm \
+		-v $(PWD)/scripts:/app/scripts \
+		-v $(PWD)/input:/app/input \
+		money-laundering python scripts/clean_client_progress.py
+
+clean-client-progress-local:
+	mkdir -p input
+	$(PYTHON) scripts/clean_client_progress.py
+
 compare:
 	docker run --rm \
 		-v $(PWD)/output:/app/output \
 		money-laundering python scripts/compare_outputs.py $(word 2,$(MAKECMDGOALS))
+
+copy-results-to-notebook:
+	mkdir -p output/notebook
+	docker run --rm \
+		--env-file .env \
+		-v $(PWD)/data:/app/data \
+		-v $(PWD)/output:/app/output \
+		-v $(PWD)/scripts:/app/scripts \
+		money-laundering python scripts/copy_results_to_notebook.py $(DATASET_ARG)
+
+copy-results-to-notebook-local:
+	mkdir -p output/notebook
+	set -a && . ./.env && $(PYTHON) scripts/copy_results_to_notebook.py $(DATASET_ARG)
+
+copy-inputs-to-clients:
+	mkdir -p input
+	docker run --rm \
+		--env-file .env \
+		-v $(PWD)/data:/app/data \
+		-v $(PWD)/input:/app/input \
+		-v $(PWD)/scripts:/app/scripts \
+		money-laundering python scripts/copy_inputs_to_clients.py $(DATASET_ARG)
+
+copy-inputs-to-clients-local:
+	mkdir -p input
+	set -a && . ./.env && $(PYTHON) scripts/copy_inputs_to_clients.py $(DATASET_ARG)
 
 build:
 	docker build -t money-laundering .

@@ -15,7 +15,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-const clientDisconnectTimeout = 60 * time.Second
+const defaultClientDisconnectTimeout time.Duration = 60 * time.Second
 
 type clientStatus struct {
 	timer     *time.Timer
@@ -24,15 +24,17 @@ type clientStatus struct {
 }
 
 type clientTracker struct {
-	mu       sync.Mutex
-	clients  map[string]*clientStatus
-	reporter *reporter
+	mu                      sync.Mutex
+	clients                 map[string]*clientStatus
+	reporter                *reporter
+	clientDisconnectTimeout time.Duration
 }
 
-func newClientTracker(reporter *reporter) *clientTracker {
+func newClientTracker(reporter *reporter, clientDisconnectTimeout time.Duration) *clientTracker {
 	return &clientTracker{
-		clients:  make(map[string]*clientStatus),
-		reporter: reporter,
+		clients:                 make(map[string]*clientStatus),
+		reporter:                reporter,
+		clientDisconnectTimeout: clientDisconnectTimeout,
 	}
 }
 
@@ -79,10 +81,10 @@ func (t *clientTracker) markDisconnected(clientID string) {
 	if status.timer != nil {
 		status.timer.Stop()
 	}
-	status.timer = time.AfterFunc(clientDisconnectTimeout, func() {
+	status.timer = time.AfterFunc(t.clientDisconnectTimeout, func() {
 		t.markAbandoned(clientID)
 	})
-	log.Printf("client %s disconnected before EOF; waiting %s before marking as abandoned", clientID, clientDisconnectTimeout)
+	log.Printf("client %s disconnected before EOF; waiting %s before marking as abandoned", clientID, t.clientDisconnectTimeout)
 }
 
 func (t *clientTracker) markAbandoned(clientID string) {
@@ -96,7 +98,7 @@ func (t *clientTracker) markAbandoned(clientID string) {
 	status.timer = nil
 	t.mu.Unlock()
 
-	log.Printf("client %s abandoned after %s without reconnecting", clientID, clientDisconnectTimeout)
+	log.Printf("client %s abandoned after %s without reconnecting", clientID, t.clientDisconnectTimeout)
 	t.reporter.markClientDisconnected(clientID)
 }
 
@@ -116,6 +118,16 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
+func envDurationOrDefault(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+		log.Printf("invalid %s %q, using default %s", key, v, def)
+	}
+	return def
+}
+
 func main() {
 	health.StartIfEnabled()
 
@@ -125,6 +137,8 @@ func main() {
 	outputQueue := envOrDefault("OUTPUT_QUEUE", "raw_transactions")
 	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
 	outputDir := envOrDefault("OUTPUT_DIR", "/output")
+	eofStorePath := envOrDefault("GATEWAY_EOF_STORE_FILE", outputDir+"/gateway_eofs.log")
+	clientDisconnectTimeout := envDurationOrDefault("CLIENT_DISCONNECT_TIMEOUT", defaultClientDisconnectTimeout)
 
 	rabbitPort, err := strconv.Atoi(portStr)
 	if err != nil {
@@ -146,7 +160,11 @@ func main() {
 	defer reportsConsumer.Close()
 
 	r := newReporter(outputDir)
-	tracker := newClientTracker(r)
+	tracker := newClientTracker(r, clientDisconnectTimeout)
+	eofs, err := newEOFStore(eofStorePath)
+	if err != nil {
+		log.Fatalf("load EOF store: %v", err)
+	}
 
 	go func() {
 		if err := reportsConsumer.StartConsuming(r.handle); err != nil {
@@ -168,11 +186,11 @@ func main() {
 			continue
 		}
 		log.Printf("client connected: %s", conn.RemoteAddr())
-		go handleClient(conn, producer, tracker)
+		go handleClient(conn, producer, tracker, eofs)
 	}
 }
 
-func handleClient(conn net.Conn, producer middleware.Middleware, tracker *clientTracker) {
+func handleClient(conn net.Conn, producer middleware.Middleware, tracker *clientTracker, eofs *eofStore) {
 	defer conn.Close()
 
 	clientID := "unknown"
@@ -211,6 +229,11 @@ func handleClient(conn net.Conn, producer middleware.Middleware, tracker *client
 			log.Printf("[client %s] accounts batch of %d (total: %d)", clientID, len(batch.Accounts), totalAccounts)
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish accounts: %v", clientID, err)
+				return
+			}
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send accounts ack: %v", clientID, err)
+				return
 			}
 
 		case protocol.BatchTypeTransactions:
@@ -218,21 +241,44 @@ func handleClient(conn net.Conn, producer middleware.Middleware, tracker *client
 			log.Printf("[client %s] transactions batch of %d (total: %d)", clientID, len(batch.Transactions), totalTransactions)
 			if err := publish(producer, batch); err != nil {
 				log.Printf("[client %s] publish transactions: %v", clientID, err)
+				return
+			}
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send transactions ack: %v", clientID, err)
+				return
 			}
 
 		case protocol.BatchTypeEOF:
 			log.Printf("[client %s] finished — accounts=%d transactions=%d", clientID, totalAccounts, totalTransactions)
-			if err := publish(producer, batch); err != nil {
-				log.Printf("[client %s] publish EOF: %v", clientID, err)
+			eofID := batch.BatchID
+			if eofID == "" {
+				eofID = "client:" + clientID + ":eof"
+			}
+			published, err := eofs.withUnseen(eofID, func() error {
+				return publish(producer, batch)
+			})
+			if err != nil {
+				log.Printf("[client %s] publish/persist EOF: %v", clientID, err)
+				return
+			}
+			if !published {
+				log.Printf("[client %s] duplicate EOF %s — acking without republishing", clientID, eofID)
 			}
 			tracker.markCompleted(clientID)
 			completed = true
-			if err := protocol.Send(conn, protocol.Batch{Type: protocol.BatchTypeACK}); err != nil {
-				log.Printf("client %s send ack: %v", clientID, err)
+			if err := sendACK(conn, batch); err != nil {
+				log.Printf("client %s send EOF ack: %v", clientID, err)
 			}
 			return
 		}
 	}
+}
+
+func sendACK(conn net.Conn, batch protocol.Batch) error {
+	return protocol.Send(conn, protocol.Batch{
+		Type:    protocol.BatchTypeACK,
+		BatchID: batch.BatchID,
+	})
 }
 
 func publish(producer middleware.Middleware, batch protocol.Batch) error {
