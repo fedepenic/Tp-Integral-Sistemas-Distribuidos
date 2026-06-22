@@ -58,12 +58,6 @@ type Scalable struct {
 	// that is a concurrent map access. Held around fn only; never nested with mu.
 	processMu sync.Mutex
 
-	// eofDone is set once a client's EOF has been fully processed. Any data
-	// batch that arrives afterwards is stale — the stateful node has already
-	// flushed and deleted that client's accumulator maps. handleData checks
-	// this map after the eofInFlight barrier and discards late data.
-	eofDone map[string]struct{}
-
 	// selfOnly suppresses peer-broadcast: the EOF exchange only routes back to
 	// this instance. Use this for nodes with exclusive per-instance input queues
 	// (e.g. max_per_bank) where each instance independently receives all upstream
@@ -256,17 +250,6 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		for s.eofInFlight[batch.ClientID] {
 			s.cond.Wait()
 		}
-		// If the EOF for this client has already been fully processed, any
-		// data batch that arrives is stale — the stateful node's accumulator
-		// maps have been flushed and deleted. Discard it.
-		if _, done := s.eofDone[batch.ClientID]; done {
-			s.globalPending--
-			s.cond.Broadcast()
-			s.mu.Unlock()
-			log.Printf("[%s] data after EOF for client=%s — discarding", s.name, batch.ClientID)
-			ack()
-			return
-		}
 		s.globalPending--
 		s.clientPending[batch.ClientID]++
 		s.mu.Unlock()
@@ -396,7 +379,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 			if result.Type == protocol.BatchTypeEOF {
 				log.Printf("[%s] EOF forwarded by fn for client=%s", s.name, clientID)
 				s.mu.Lock()
-				s.eofDone[clientID] = struct{}{}
 				delete(s.eofInFlight, clientID)
 				s.eofCompleted[clientID] = struct{}{}
 				s.cond.Broadcast()
@@ -408,7 +390,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 			if err != nil {
 				log.Printf("[%s] marshal flush result client=%s: %v", s.name, clientID, err)
 				s.mu.Lock()
-				s.eofDone[clientID] = struct{}{}
 				delete(s.eofInFlight, clientID)
 				s.cond.Broadcast()
 				s.mu.Unlock()
@@ -418,7 +399,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 			if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
 				log.Printf("[%s] send flush result client=%s: %v", s.name, clientID, err)
 				s.mu.Lock()
-				s.eofDone[clientID] = struct{}{}
 				delete(s.eofInFlight, clientID)
 				s.cond.Broadcast()
 				s.mu.Unlock()
@@ -434,7 +414,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		if err != nil {
 			log.Printf("[%s] marshal EOF forward client=%s: %v", s.name, clientID, err)
 			s.mu.Lock()
-			s.eofDone[clientID] = struct{}{}
 			delete(s.eofInFlight, clientID)
 			s.cond.Broadcast()
 			s.mu.Unlock()
@@ -444,7 +423,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		if err := outputMW.Send(middleware.Message{Body: string(forwardData)}); err != nil {
 			log.Printf("[%s] send EOF client=%s: %v", s.name, clientID, err)
 			s.mu.Lock()
-			s.eofDone[clientID] = struct{}{}
 			delete(s.eofInFlight, clientID)
 			s.cond.Broadcast()
 			s.mu.Unlock()
@@ -454,7 +432,6 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		log.Printf("[%s] EOF forwarded client=%s", s.name, clientID)
 
 		s.mu.Lock()
-		s.eofDone[clientID] = struct{}{}
 		if s.leftUpstream > 0 {
 			delete(s.eofLeftCount, clientID)
 			delete(s.eofRightCount, clientID)
