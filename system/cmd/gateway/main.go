@@ -138,6 +138,7 @@ func main() {
 	reportsQueue := envOrDefault("REPORTS_QUEUE", "reports")
 	outputDir := envOrDefault("OUTPUT_DIR", "/output")
 	eofStorePath := envOrDefault("GATEWAY_EOF_STORE_FILE", outputDir+"/gateway_eofs.log")
+	reportEOFStorePath := envOrDefault("GATEWAY_REPORT_EOF_STORE_FILE", outputDir+"/gateway_report_eofs.log")
 	clientDisconnectTimeout := envDurationOrDefault("CLIENT_DISCONNECT_TIMEOUT", defaultClientDisconnectTimeout)
 
 	rabbitPort, err := strconv.Atoi(portStr)
@@ -159,12 +160,16 @@ func main() {
 	}
 	defer reportsConsumer.Close()
 
-	r := newReporter(outputDir)
-	tracker := newClientTracker(r, clientDisconnectTimeout)
 	eofs, err := newEOFStore(eofStorePath)
 	if err != nil {
 		log.Fatalf("load EOF store: %v", err)
 	}
+	reportEOFs, err := newEOFStore(reportEOFStorePath)
+	if err != nil {
+		log.Fatalf("load report EOF store: %v", err)
+	}
+	r := newReporter(outputDir, reportEOFs)
+	tracker := newClientTracker(r, clientDisconnectTimeout)
 
 	go func() {
 		if err := reportsConsumer.StartConsuming(r.handle); err != nil {

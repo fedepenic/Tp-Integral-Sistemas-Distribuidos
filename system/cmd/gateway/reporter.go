@@ -38,15 +38,17 @@ type reporter struct {
 	disconnectedClients map[string]bool
 	seenAccounts        map[string]map[string]bool // key: clientID + "/" + queryID
 	deduper             *dedup.BatchDeduplicator
+	eofs                *eofStore
 }
 
-func newReporter(outputDir string) *reporter {
+func newReporter(outputDir string, eofs *eofStore) *reporter {
 	return &reporter{
 		outputDir:           outputDir,
 		writers:             make(map[string]*queryWriter),
 		disconnectedClients: make(map[string]bool),
 		seenAccounts:        make(map[string]map[string]bool),
 		deduper:             dedup.New(),
+		eofs:                eofs,
 	}
 }
 
@@ -103,7 +105,7 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	return w, nil
 }
 
-func (r *reporter) closeWriter(clientID, queryID string) {
+func (r *reporter) closeWriter(clientID, queryID string) error {
 	key := clientID + "/" + queryID
 	w, ok := r.writers[key]
 	if !ok {
@@ -111,22 +113,22 @@ func (r *reporter) closeWriter(clientID, queryID string) {
 		// comparison script finds a file even when the query has no results.
 		w, err := r.writerFor(clientID, queryID)
 		if err != nil {
-			log.Printf("reporter: create empty file client %s query %s: %v", clientID, queryID, err)
-			return
+			return fmt.Errorf("create empty file client %s query %s: %w", clientID, queryID, err)
 		}
 		if !w.headerWritten {
 			writeEmptyHeaders(w, queryID)
 		}
 		if err := closeAndReplace(w); err != nil {
-			log.Printf("reporter: close empty file for client %s query %s: %v", clientID, queryID, err)
+			return fmt.Errorf("close empty file for client %s query %s: %w", clientID, queryID, err)
 		}
 		delete(r.writers, key)
-		return
+		return nil
 	}
 	if err := closeAndReplace(w); err != nil {
-		log.Printf("reporter: close file for client %s query %s: %v", clientID, queryID, err)
+		return fmt.Errorf("close file for client %s query %s: %w", clientID, queryID, err)
 	}
 	delete(r.writers, key)
+	return nil
 }
 
 func (r *reporter) publishWriter(clientID, queryID string, w *queryWriter) error {
@@ -237,7 +239,20 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 	}
 
 	if batch.Type == protocol.BatchTypeEOF {
-		r.closeWriter(batch.ClientID, batch.QueryID)
+		eofID := reportEOFID(batch)
+		closed, err := r.eofs.withUnseen(eofID, func() error {
+			return r.closeWriter(batch.ClientID, batch.QueryID)
+		})
+		if err != nil {
+			log.Printf("reporter: close/persist EOF %s: %v", eofID, err)
+			nack()
+			return
+		}
+		if !closed {
+			log.Printf("reporter: duplicate EOF %s (client=%s query=%s)", eofID, batch.ClientID, batch.QueryID)
+			ack()
+			return
+		}
 		delete(r.seenAccounts, batch.ClientID+"/"+batch.QueryID)
 		log.Printf("reporter: query %s complete for client %s", batch.QueryID, batch.ClientID)
 		ack()
@@ -287,6 +302,13 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 	ack()
+}
+
+func reportEOFID(batch protocol.Batch) string {
+	if batch.BatchID != "" {
+		return "report:" + batch.ClientID + ":query:" + batch.QueryID + ":" + batch.BatchID
+	}
+	return "report:" + batch.ClientID + ":query:" + batch.QueryID + ":eof"
 }
 
 func closeAndReplace(w *queryWriter) error {
