@@ -58,10 +58,10 @@ run-notebook-local:
 	set -a && . ./.env && $(PYTHON) scripts/run_analysis.py
 
 run-system: stop-system
-	docker-compose -f system/docker-compose.yml up --build --remove-orphans
+	docker compose -f system/docker-compose.yml up --build --remove-orphans
 
 stop-system:
-	docker-compose -f system/docker-compose.yml down -v
+	docker compose -f system/docker-compose.yml down -v
 
 prune:
 	docker image prune -f
@@ -70,10 +70,18 @@ down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
 
 kill:
-	docker-compose -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
+	docker compose -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
 
 chaos:
 	set -a && . ./.env && $(PYTHON) scripts/chaos.py
+
+clean-system-output:
+	rm -rf output/system/*
+	find input -name "*.progress" -delete
+	mkdir -p output/system
+
+run-system-only: clean-system-output stop-system
+	docker compose -f system/docker-compose.yml up --build --remove-orphans
 
 %:
 	@:
