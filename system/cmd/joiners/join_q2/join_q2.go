@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -12,8 +13,15 @@ import (
 func newProcess() node.ProcessFunc {
 	var mu sync.Mutex
 	states := make(map[string]joinQ2State)
+	deduper := dedup.New()
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
+		if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
+			if deduper.Seen(batch.BatchID) {
+				return protocol.Batch{}, false
+			}
+		}
+
 		if batch.Type == protocol.BatchTypeEOF {
 			mu.Lock()
 			state, ok := states[batch.ClientID]
@@ -83,6 +91,7 @@ func newProcess() node.ProcessFunc {
 		}
 
 		states[batch.ClientID] = state
+		deduper.Mark(batch.BatchID)
 
 		if len(results) == 0 {
 			return protocol.Batch{}, false
