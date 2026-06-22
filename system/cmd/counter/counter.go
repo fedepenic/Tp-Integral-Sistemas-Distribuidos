@@ -44,6 +44,12 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 				ClientID: batch.ClientID,
 				Count:    total,
 			})
+
+			return protocol.Batch{
+				Type:     protocol.BatchTypeEOF,
+				ClientID: batch.ClientID,
+				BatchID:  id.AggregatorEOF("counter", 1, batch.ClientID),
+			}, true
 		}
 
 		return protocol.Batch{}, false
