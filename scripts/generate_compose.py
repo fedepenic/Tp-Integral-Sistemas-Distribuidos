@@ -390,6 +390,10 @@ def active_for(name: str, membership: dict[str, set[str]], active_queries: set[s
 
 HEALTH_PORT = 9999
 
+# EOF state persistence — each node saves its EOF processing state to this
+# directory so it survives crashes. Uses the service_instance as filename.
+EOF_STATE_DIR = "/output/system/eof_state"
+
 
 def get_bool_env(env: dict[str, str], key: str, default: bool = False) -> bool:
     value = env.get(key)
@@ -532,7 +536,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             env_map.update(services_extra_env(name, env, active_queries))
             for k, v in env_map.items():
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
+            lines.append(f"    volumes:")
+            lines.append(f"      - ../output:/output")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
@@ -570,7 +577,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k == "INPUT_KEY_PREFIX":
                     continue
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
+            lines.append(f"    volumes:")
+            lines.append(f"      - ../output:/output")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
@@ -612,7 +622,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k in ("INPUT_KEY_PREFIX", "INPUT_QUEUE_NAME_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
                     continue
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
+            lines.append(f"    volumes:")
+            lines.append(f"      - ../output:/output")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")
@@ -638,7 +651,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
+        lines.append(f"      - NODE_EOF_STATE={EOF_STATE_DIR}/{svc_name}.json")
         append_watcher_health_env(lines, watcher_enabled)
+        lines.append(f"    volumes:")
+        lines.append(f"      - ../output:/output")
         lines.append(f"    depends_on:")
         lines.append(f"      rabbitmq:")
         lines.append(f"        condition: service_healthy")
@@ -665,7 +681,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
+        lines.append(f"      - NODE_EOF_STATE={EOF_STATE_DIR}/sink_{query_id}.json")
         append_watcher_health_env(lines, watcher_enabled)
+        lines.append(f"    volumes:")
+        lines.append(f"      - ../output:/output")
         lines.append(f"    depends_on:")
         lines.append(f"      rabbitmq:")
         lines.append(f"        condition: service_healthy")
@@ -698,7 +717,10 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
             nf_env.update(named_filters_extra_env(svc_name, env))
             for k, v in nf_env.items():
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
+            lines.append(f"    volumes:")
+            lines.append(f"      - ../output:/output")
             lines.append(f"    depends_on:")
             lines.append(f"      rabbitmq:")
             lines.append(f"        condition: service_healthy")

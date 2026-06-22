@@ -31,12 +31,15 @@ type ProcessFunc func(batch protocol.Batch) (result protocol.Batch, ok bool)
 //
 //	UPSTREAM_INSTANCES   — upstream EOF count per client (default 1)
 //	RABBITMQ_HOST, RABBITMQ_PORT
+//	NODE_EOF_STATE       — path to EOF state file (optional, default empty)
 type Node struct {
 	conn          middleware.ConnSettings
 	upstreamCount int
+	persister     *eofPersister
 }
 
 // NewNode reads connection settings and UPSTREAM_INSTANCES from the environment.
+// If NODE_EOF_STATE is set, EOF recovery state is persisted to that path.
 func NewNode() *Node {
 	n := newNode()
 	return &n
@@ -51,9 +54,16 @@ func newNode() Node {
 			upstream = n
 		}
 	}
+
+	var persister *eofPersister
+	if path := os.Getenv("NODE_EOF_STATE"); path != "" {
+		persister = newEOFPersister(path)
+	}
+
 	return Node{
 		conn:          config.ConnSettings(),
 		upstreamCount: upstream,
+		persister:     persister,
 	}
 }
 
@@ -67,6 +77,14 @@ func (n *Node) UpstreamCount() int { return n.upstreamCount }
 // sends the result to outputMW. EOFs are counted per client; fn is called
 // with the EOF only after upstreamCount EOFs have arrived for that client.
 func (n *Node) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
+	if n.persister == nil {
+		n.runVolatile(inputMW, outputMW, fn)
+	} else {
+		n.runPersistent(inputMW, outputMW, fn)
+	}
+}
+
+func (n *Node) runVolatile(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 	eofCounts := make(map[string]int)
 	seenEOFs := make(map[string]struct{})
 
@@ -93,6 +111,94 @@ func (n *Node) Run(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
 				return
 			}
 			delete(eofCounts, batch.ClientID)
+		}
+
+		result, ok := fn(batch)
+		if !ok {
+			ack()
+			return
+		}
+
+		data, err := json.Marshal(result)
+		if err != nil {
+			log.Printf("[node] marshal result: %v", err)
+			nack()
+			return
+		}
+		if err := outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
+			log.Printf("[node] send to output: %v", err)
+			nack()
+			return
+		}
+		ack()
+	}); err != nil && err != middleware.ErrMessageMiddlewareDisconnected {
+		log.Printf("[node] consumer error: %v", err)
+	}
+}
+
+func (n *Node) runPersistent(inputMW, outputMW middleware.Middleware, fn ProcessFunc) {
+	st := n.persister
+
+	if err := inputMW.StartConsuming(func(msg middleware.Message, ack func(), nack func()) {
+		var batch protocol.Batch
+		if err := json.Unmarshal([]byte(msg.Body), &batch); err != nil {
+			log.Printf("[node] malformed message — discarding: %v", err)
+			ack()
+			return
+		}
+
+		if batch.Type == protocol.BatchTypeEOF {
+			clientID := batch.ClientID
+			batchID := batch.BatchID
+
+			// Already forwarded for this client? Ignore all future EOFs.
+			if _, forwarded := st.EOFForwarded[clientID]; forwarded {
+				log.Printf("[node] EOF already forwarded for client=%s — ignoring", clientID)
+				ack()
+				return
+			}
+
+			// Dedup by BatchID.
+			// If already seen: this is a re-delivery from a crash. The counter
+			// already includes this BatchID, so skip incrementing. If the
+			// barrier is already met (counter >= threshold), proceed to forward.
+			alreadySeen := false
+			if batchID != "" {
+				if _, seen := st.SeenEOFs[batchID]; seen {
+					alreadySeen = true
+				} else {
+					st.SeenEOFs[batchID] = struct{}{}
+				}
+			}
+
+			if !alreadySeen {
+				st.EOFCounts[clientID]++
+				st.persist()
+			}
+
+			count := st.EOFCounts[clientID]
+			if count < n.upstreamCount {
+				log.Printf("[node] EOF client=%s (%d/%d) batch=%s", clientID, count, n.upstreamCount, batchID)
+				ack()
+				return
+			}
+
+			// Barrier met — mark as forwarded so future duplicates are ignored.
+			st.EOFForwarded[clientID] = struct{}{}
+			delete(st.EOFCounts, clientID)
+			st.persist()
+
+			log.Printf("[node] EOF barrier complete for client=%s — forwarding", clientID)
+		}
+
+		// If this client's EOF was already forwarded (recovered from persisted
+		// state), data batches after that point are stale — ack without processing.
+		if batch.Type != protocol.BatchTypeEOF {
+			if _, forwarded := st.EOFForwarded[batch.ClientID]; forwarded {
+				log.Printf("[node] data batch after EOF forward for client=%s — discarding", batch.ClientID)
+				ack()
+				return
+			}
 		}
 
 		result, ok := fn(batch)

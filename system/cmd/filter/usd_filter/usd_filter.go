@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
@@ -12,9 +14,10 @@ import (
 )
 
 func newProcess(directMW middleware.Middleware, keyPrefix string, partitions int) node.ProcessFunc {
+	instanceID := config.MustEnvInt("INSTANCE_ID")
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
-			sendQ2EOF(directMW, batch, keyPrefix, partitions)
+			sendQ2EOF(directMW, batch, keyPrefix, partitions, instanceID)
 			return protocol.Batch{}, false
 		}
 
@@ -82,7 +85,13 @@ func sendToQ2(mw middleware.Middleware, clientID string, inputs []filterInput, k
 	}
 }
 
-func sendQ2EOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int) {
+func sendQ2EOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int, instanceID int) {
+	// Append the forwarding instance ID so that different instances of the
+	// same upstream service always produce unique BatchIDs. Without this,
+	// two instances can be triggered by the same barrier batch (identical
+	// BatchID), causing the downstream aggregator to deduplicate the second
+	// via seenEOFs and never reach its barrier threshold.
+	batch.BatchID = fmt.Sprintf("%s:i%d", batch.BatchID, instanceID)
 	data, err := json.Marshal(batch)
 	if err != nil {
 		log.Printf("[usd_filter] marshal Q2 EOF: %v", err)

@@ -44,16 +44,26 @@ func exclusiveQueueName(exchange string, keys []string) string {
 }
 
 func NewExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
-	return newExchangeMiddleware(exchange, keys, connectionSettings, true)
+	return newExchangeMiddleware(exchange, keys, connectionSettings, queueOpts{})
+}
+
+// NewDurableExchangeMiddleware declares a durable, non-exclusive, non-auto-delete queue.
+func NewDurableExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
+	return newExchangeMiddleware(exchange, keys, connectionSettings, queueOpts{durable: true})
 }
 
 // NewExchangePublisherMiddleware declares a direct exchange for publishing only.
 // It does not declare or bind a queue because publishers do not consume from one.
 func NewExchangePublisherMiddleware(exchange string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
-	return newExchangeMiddleware(exchange, keys, connectionSettings, false)
+	return newExchangeMiddleware(exchange, keys, connectionSettings, queueOpts{skipQueue: true})
 }
 
-func newExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings, declareQueue bool) (Middleware, error) {
+type queueOpts struct {
+	skipQueue bool
+	durable   bool
+}
+
+func newExchangeMiddleware(exchange string, keys []string, connectionSettings ConnSettings, opts queueOpts) (Middleware, error) {
 	connStr := fmt.Sprintf("amqp://guest:guest@%s:%d/", connectionSettings.Hostname, connectionSettings.Port)
 	conn, err := amqp.Dial(connStr)
 	if err != nil {
@@ -81,12 +91,12 @@ func newExchangeMiddleware(exchange string, keys []string, connectionSettings Co
 	}
 
 	queueName := ""
-	if declareQueue {
+	if !opts.skipQueue {
 		q, err := ch.QueueDeclare(
 			exclusiveQueueName(exchange, keys),
-			false,
-			true,
-			true,
+			opts.durable,
+			!opts.durable,
+			!opts.durable,
 			false,
 			nil,
 		)
