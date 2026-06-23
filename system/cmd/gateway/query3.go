@@ -11,16 +11,15 @@ func writeQ3Rows(w *queryWriter, batch protocol.Batch) error {
 		return nil
 	}
 	if !w.headerWritten {
-		w.csv.Write([]string{"From Bank", "Account", "Payment Format", "Amount Paid"})
-		w.headerWritten = true
+		writeStagingHeaders(w, batch.QueryID)
 	}
-	for _, t := range batch.Transactions {
-		w.csv.Write([]string{
+	for i, t := range batch.Transactions {
+		w.csv.Write(rowWithMetadata(batch.BatchID, i, []string{
 			t.FromBank,
 			t.FromAccount,
 			t.PaymentFormat,
 			strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
-		})
+		}))
 	}
 	return w.csv.Error()
 }

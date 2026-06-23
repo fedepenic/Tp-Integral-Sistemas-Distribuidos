@@ -16,23 +16,14 @@ func writeQ4Rows(w *queryWriter, batch protocol.Batch) error {
 		return fmt.Errorf("unmarshal scatter_gather_result: %w", err)
 	}
 	if !w.headerWritten {
-		w.csv.Write([]string{"Bank", "Account"})
-		w.headerWritten = true
+		writeStagingHeaders(w, batch.QueryID)
 	}
-	if w.seenAccounts == nil {
-		w.seenAccounts = make(map[string]bool)
-	}
+	rowNumber := 0
 	for _, res := range results {
-		fromKey := res.FromBank + "|" + res.FromAccount
-		if !w.seenAccounts[fromKey] {
-			w.seenAccounts[fromKey] = true
-			w.csv.Write([]string{res.FromBank, res.FromAccount})
-		}
-		toKey := res.ToBank + "|" + res.ToAccount
-		if !w.seenAccounts[toKey] {
-			w.seenAccounts[toKey] = true
-			w.csv.Write([]string{res.ToBank, res.ToAccount})
-		}
+		w.csv.Write(rowWithMetadata(batch.BatchID, rowNumber, []string{res.FromBank, res.FromAccount}))
+		rowNumber++
+		w.csv.Write(rowWithMetadata(batch.BatchID, rowNumber, []string{res.ToBank, res.ToAccount}))
+		rowNumber++
 	}
 	return w.csv.Error()
 }

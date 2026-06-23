@@ -3,15 +3,14 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 
-	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
@@ -22,9 +21,9 @@ type queryWriter struct {
 	file          *os.File
 	csv           *csv.Writer
 	finalPath     string
+	stagingPath   string
 	tmpPath       string
 	headerWritten bool
-	seenAccounts  map[string]bool // for deduplication (Q4)
 }
 
 // reporter consumes from the reports queue and writes results to CSV files,
@@ -36,8 +35,6 @@ type reporter struct {
 	outputDir           string
 	writers             map[string]*queryWriter // key: clientID + "/" + queryID
 	disconnectedClients map[string]bool
-	seenAccounts        map[string]map[string]bool // key: clientID + "/" + queryID
-	deduper             *dedup.BatchDeduplicator
 	eofs                *eofStore
 }
 
@@ -46,8 +43,6 @@ func newReporter(outputDir string, eofs *eofStore) *reporter {
 		outputDir:           outputDir,
 		writers:             make(map[string]*queryWriter),
 		disconnectedClients: make(map[string]bool),
-		seenAccounts:        make(map[string]map[string]bool),
-		deduper:             dedup.New(),
 		eofs:                eofs,
 	}
 }
@@ -64,42 +59,22 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	}
 
 	path := filepath.Join(dir, "query_"+queryID+".csv")
-	tmpPath := path + ".tmp"
+	stagingPath := filepath.Join(dir, ".query_"+queryID+".staging.csv")
 
-	// If the file already exists a previous EOF closed it and late-arriving
-	// batches are about to be appended. Copy it to the temp output first so
-	// the final CSV is replaced only when the updated file is complete.
-	_, statErr := os.Stat(path)
-	alreadyExists := statErr == nil
-	if alreadyExists {
-		if err := copyFile(path, tmpPath); err != nil {
-			return nil, fmt.Errorf("copy output file %s to %s: %w", path, tmpPath, err)
-		}
-	}
-
-	var f *os.File
-	var err error
-	if alreadyExists {
-		f, err = os.OpenFile(tmpPath, os.O_APPEND|os.O_WRONLY, 0o644)
-	} else {
-		f, err = os.Create(tmpPath)
-	}
+	stagingInfo, statErr := os.Stat(stagingPath)
+	headerWritten := statErr == nil && stagingInfo.Size() > 0
+	f, err := os.OpenFile(stagingPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("open output file %s: %w", tmpPath, err)
+		return nil, fmt.Errorf("open staging file %s: %w", stagingPath, err)
 	}
 
 	w := &queryWriter{
 		file:          f,
 		csv:           csv.NewWriter(f),
 		finalPath:     path,
-		tmpPath:       tmpPath,
-		headerWritten: alreadyExists,
-	}
-	if queryID == "4" {
-		if r.seenAccounts[key] == nil {
-			r.seenAccounts[key] = make(map[string]bool)
-		}
-		w.seenAccounts = r.seenAccounts[key]
+		stagingPath:   stagingPath,
+		tmpPath:       path + ".tmp",
+		headerWritten: headerWritten,
 	}
 	r.writers[key] = w
 	return w, nil
@@ -116,15 +91,15 @@ func (r *reporter) closeWriter(clientID, queryID string) error {
 			return fmt.Errorf("create empty file client %s query %s: %w", clientID, queryID, err)
 		}
 		if !w.headerWritten {
-			writeEmptyHeaders(w, queryID)
+			writeStagingHeaders(w, queryID)
 		}
-		if err := closeAndReplace(w); err != nil {
+		if err := closeAndPublish(w, queryID); err != nil {
 			return fmt.Errorf("close empty file for client %s query %s: %w", clientID, queryID, err)
 		}
 		delete(r.writers, key)
 		return nil
 	}
-	if err := closeAndReplace(w); err != nil {
+	if err := closeAndPublish(w, queryID); err != nil {
 		return fmt.Errorf("close file for client %s query %s: %w", clientID, queryID, err)
 	}
 	delete(r.writers, key)
@@ -133,8 +108,15 @@ func (r *reporter) closeWriter(clientID, queryID string) error {
 
 func (r *reporter) publishWriter(clientID, queryID string, w *queryWriter) error {
 	key := clientID + "/" + queryID
-	if err := closeAndReplace(w); err != nil {
+	if err := closeStaging(w); err != nil {
 		return err
+	}
+	if _, err := os.Stat(w.finalPath); err == nil {
+		if err := publishCompactedCSV(w.stagingPath, w.tmpPath, w.finalPath, queryID); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat final output file %s: %w", w.finalPath, err)
 	}
 	delete(r.writers, key)
 	return nil
@@ -156,7 +138,7 @@ func (r *reporter) closeClientWriters(clientID string) {
 		if filepath.Dir(key) != clientID {
 			continue
 		}
-		if err := closeAndReplace(w); err != nil {
+		if err := closeStaging(w); err != nil {
 			log.Printf("reporter: close file for disconnected client %s: %v", clientID, err)
 		}
 		delete(r.writers, key)
@@ -196,20 +178,21 @@ func (r *reporter) writeDisconnectedFiles(clientID string) error {
 	return nil
 }
 
-// writeEmptyHeaders writes the column headers for a query with no result rows.
-func writeEmptyHeaders(w *queryWriter, queryID string) {
+func writeStagingHeaders(w *queryWriter, queryID string) {
+	headers := []string{"batch_id", "row_number"}
 	switch queryID {
 	case "1":
-		w.csv.Write([]string{"From Bank", "Account", "To Bank", "Account.1", "Amount Paid"})
+		headers = append(headers, "From Bank", "Account", "To Bank", "Account.1", "Amount Paid")
 	case "2":
-		w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
+		headers = append(headers, "From Bank", "Account", "Bank Name", "Amount Paid")
 	case "3":
-		w.csv.Write([]string{"From Bank", "Account", "Payment Format", "Amount Paid"})
+		headers = append(headers, "From Bank", "Account", "Payment Format", "Amount Paid")
 	case "4":
-		w.csv.Write([]string{"Bank", "Account"})
+		headers = append(headers, "Bank", "Account")
 	case "5":
-		w.csv.Write([]string{"quantity"})
+		headers = append(headers, "quantity")
 	}
+	w.csv.Write(headers)
 	w.headerWritten = true
 }
 
@@ -230,14 +213,6 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 		return
 	}
 
-	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
-		if r.deduper.CheckAndMark(batch.BatchID) {
-			log.Printf("reporter: duplicate batch %s (client=%s query=%s)", batch.BatchID, batch.ClientID, batch.QueryID)
-			ack()
-			return
-		}
-	}
-
 	if batch.Type == protocol.BatchTypeEOF {
 		eofID := reportEOFID(batch)
 		closed, err := r.eofs.withUnseen(eofID, func() error {
@@ -253,7 +228,6 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 			ack()
 			return
 		}
-		delete(r.seenAccounts, batch.ClientID+"/"+batch.QueryID)
 		log.Printf("reporter: query %s complete for client %s", batch.QueryID, batch.ClientID)
 		ack()
 		return
@@ -268,7 +242,7 @@ func (r *reporter) handle(msg middleware.Message, ack func(), nack func()) {
 
 	if batch.Type == protocol.BatchTypeCount {
 		log.Printf("reporter: count received client=%s query=%s count=%d", batch.ClientID, batch.QueryID, batch.Count)
-		if err := r.writeCount(w, batch.Count); err != nil {
+		if err := r.writeCount(w, batch); err != nil {
 			log.Printf("reporter: write count for client %s query %s: %v", batch.ClientID, batch.QueryID, err)
 			nack()
 			return
@@ -311,69 +285,46 @@ func reportEOFID(batch protocol.Batch) string {
 	return "report:" + batch.ClientID + ":query:" + batch.QueryID + ":eof"
 }
 
-func closeAndReplace(w *queryWriter) error {
+func closeStaging(w *queryWriter) error {
 	w.csv.Flush()
 	if err := w.csv.Error(); err != nil {
 		_ = w.file.Close()
-		return fmt.Errorf("flush output file %s: %w", w.tmpPath, err)
+		return fmt.Errorf("flush staging file %s: %w", w.stagingPath, err)
 	}
 	if err := w.file.Close(); err != nil {
-		return fmt.Errorf("close output file %s: %w", w.tmpPath, err)
-	}
-	if err := os.Rename(w.tmpPath, w.finalPath); err != nil {
-		return fmt.Errorf("replace output file %s: %w", w.finalPath, err)
+		return fmt.Errorf("close staging file %s: %w", w.stagingPath, err)
 	}
 	return nil
 }
 
-func copyFile(srcPath, dstPath string) error {
-	src, err := os.Open(srcPath)
-	if err != nil {
-		return fmt.Errorf("open source file: %w", err)
+func closeAndPublish(w *queryWriter, queryID string) error {
+	if err := closeStaging(w); err != nil {
+		return err
 	}
-	defer src.Close()
-
-	dst, err := os.Create(dstPath)
-	if err != nil {
-		return fmt.Errorf("create destination file: %w", err)
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("copy file contents: %w", err)
-	}
-	return nil
+	return publishCompactedCSV(w.stagingPath, w.tmpPath, w.finalPath, queryID)
 }
 
-func (r *reporter) writeCount(w *queryWriter, count int64) error {
+func (r *reporter) writeCount(w *queryWriter, batch protocol.Batch) error {
 	if !w.headerWritten {
-		w.csv.Write([]string{"quantity"})
-		w.headerWritten = true
+		writeStagingHeaders(w, "5")
 	}
-	w.csv.Write([]string{strconv.FormatInt(count, 10)})
+	w.csv.Write(rowWithMetadata(batch.BatchID, 0, []string{strconv.FormatInt(batch.Count, 10)}))
 	return w.csv.Error()
 }
 
 func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 	if len(batch.Transactions) > 0 {
 		if !w.headerWritten {
-			w.csv.Write([]string{
-				"From Bank",
-				"Account",
-				"To Bank",
-				"Account.1",
-				"Amount Paid",
-			})
-			w.headerWritten = true
+			writeStagingHeaders(w, batch.QueryID)
 		}
-		for _, t := range batch.Transactions {
-			w.csv.Write([]string{
+		for i, t := range batch.Transactions {
+			w.csv.Write(rowWithMetadata(batch.BatchID, i, []string{
 				t.FromBank,
 				t.FromAccount,
 				t.ToBank,
 				t.ToAccount,
 				strconv.FormatFloat(t.AmountPaid, 'f', -1, 64),
-			})
+			}))
 		}
 	}
 
@@ -383,18 +334,24 @@ func (r *reporter) writeRows(w *queryWriter, batch protocol.Batch) error {
 			return fmt.Errorf("unmarshal max_per_bank records: %w", err)
 		}
 		if !w.headerWritten {
-			w.csv.Write([]string{"From Bank", "Account", "Bank Name", "Amount Paid"})
-			w.headerWritten = true
+			writeStagingHeaders(w, batch.QueryID)
 		}
-		for _, res := range results {
-			w.csv.Write([]string{
+		for i, res := range results {
+			w.csv.Write(rowWithMetadata(batch.BatchID, i, []string{
 				res.BankID,
 				res.SourceAccount,
 				res.BankName,
 				strconv.FormatFloat(res.MaxAmountUSD, 'f', -1, 64),
-			})
+			}))
 		}
 	}
 
 	return w.csv.Error()
+}
+
+func rowWithMetadata(batchID string, rowNumber int, row []string) []string {
+	out := make([]string, 0, len(row)+2)
+	out = append(out, batchID, strconv.Itoa(rowNumber))
+	out = append(out, row...)
+	return out
 }
