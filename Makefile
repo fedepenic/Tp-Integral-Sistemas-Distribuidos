@@ -1,4 +1,5 @@
 PYTHON ?= python3.11
+DOCKER_COMPOSE ?= $(shell if command -v docker-compose >/dev/null 2>&1; then echo docker-compose; else echo docker compose; fi)
 
 -include .env
 export
@@ -101,10 +102,17 @@ run-notebook-local:
 	set -a && . ./.env && $(PYTHON) scripts/run_analysis.py
 
 run-system: stop-system
-	docker compose -f system/docker-compose.yml up --build --remove-orphans
+	$(DOCKER_COMPOSE) -f system/docker-compose.yml up --build --remove-orphans
 
 stop-system:
-	docker compose -f system/docker-compose.yml down -v
+	$(DOCKER_COMPOSE) -f system/docker-compose.yml down -v
+
+monitor-services:
+	@while true; do \
+		clear; \
+		docker ps; \
+		sleep 1; \
+	done
 
 prune:
 	docker image prune -f
@@ -113,7 +121,7 @@ down:
 	docker stop $$(docker ps -q --filter ancestor=money-laundering) 2>/dev/null || true
 
 kill:
-	docker compose -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
+	$(DOCKER_COMPOSE) -f system/docker-compose.yml kill -s SIGKILL $(word 2,$(MAKECMDGOALS))
 
 chaos:
 	set -a && . ./.env && $(PYTHON) scripts/chaos.py
@@ -124,7 +132,7 @@ clean-system-output:
 	mkdir -p output/system
 
 run-system-only: clean-system-output stop-system
-	docker compose -f system/docker-compose.yml up --build --remove-orphans
+	$(DOCKER_COMPOSE) -f system/docker-compose.yml up --build --remove-orphans
 
 %:
 	@:

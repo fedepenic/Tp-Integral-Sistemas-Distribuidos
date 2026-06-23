@@ -15,6 +15,7 @@ Usage:
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -25,6 +26,13 @@ COMPOSE_FILE = Path(__file__).parent.parent / "system" / "docker-compose.yml"
 PROJECT_ROOT = Path(__file__).parent.parent
 INSTANCE_SUFFIX_RE = re.compile(r"^(?P<base>.+)_(?P<instance>\d+)$")
 KILL_ALL_SERVICE_KINDS = {"client", "gateway"}
+
+
+def docker_compose_cmd() -> list[str]:
+    if shutil.which("docker-compose"):
+        return ["docker-compose"]
+
+    return ["docker", "compose"]
 
 
 def parse_services(compose_path: Path) -> list[str]:
@@ -70,7 +78,7 @@ def running_services(services: list[str]) -> set[str]:
     running = set()
     for service in services:
         ps = subprocess.run(
-            ["docker-compose", "-f", "system/docker-compose.yml", "ps", "-q", service],
+            [*docker_compose_cmd(), "-f", "system/docker-compose.yml", "ps", "-q", service],
             cwd=PROJECT_ROOT,
             check=False,
             capture_output=True,
@@ -113,7 +121,7 @@ def choose_targets(services_by_kind: dict[str, list[str]], services_per_interval
 
 def kill_service(service: str) -> None:
     subprocess.run(
-        ["docker-compose", "-f", "system/docker-compose.yml", "kill", "-s", "SIGKILL", service],
+        [*docker_compose_cmd(), "-f", "system/docker-compose.yml", "kill", "-s", "SIGKILL", service],
         cwd=PROJECT_ROOT,
         check=False,
     )
