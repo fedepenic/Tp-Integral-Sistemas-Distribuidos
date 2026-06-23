@@ -42,8 +42,10 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 		}
 	}
 	if batch.Type == protocol.BatchTypeEOF {
-		m.flush(batch.ClientID)
-		return batch, true
+		if m.flush(batch.ClientID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
@@ -63,12 +65,12 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 	return protocol.Batch{}, false
 }
 
-func (m *avgPerPaymentFormat) flush(clientID string) {
+func (m *avgPerPaymentFormat) flush(clientID string) bool {
 	formats, ok := m.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(m.state, clientID)
+
 	keys := make([]string, 0, len(formats))
 	for format := range formats {
 		keys = append(keys, format)
@@ -96,11 +98,8 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 				p,
 				chunkCountByPartition[p],
 			); err != nil {
-				log.Printf(
-					"[avg_per_payment_format] send partition=%d: %v",
-					p,
-					err,
-				)
+				log.Printf("[avg_per_payment_format] send partition=%d: %v", p, err)
+				return false
 			}
 			partitioned[p] = nil
 			chunkCountByPartition[p]++
@@ -117,15 +116,14 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 			partition,
 			chunkCountByPartition[partition],
 		); err != nil {
-			log.Printf(
-				"[avg_per_payment_format] send partition=%d: %v",
-				partition,
-				err,
-			)
+			log.Printf("[avg_per_payment_format] send partition=%d: %v", partition, err)
+			return false
 		}
 	}
 
+	delete(m.state, clientID)
 	m.sendEOF(clientID)
+	return true
 }
 
 func (m *avgPerPaymentFormat) sendPartition(

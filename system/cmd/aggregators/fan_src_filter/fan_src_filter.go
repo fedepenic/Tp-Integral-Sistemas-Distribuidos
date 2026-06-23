@@ -53,8 +53,10 @@ func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
 	}
 
 	if batch.Type == protocol.BatchTypeEOF {
-		f.flush(batch.ClientID, batch.BatchID)
-		return batch, true
+		if f.flush(batch.ClientID, batch.BatchID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
@@ -87,12 +89,11 @@ func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
 	return protocol.Batch{}, false
 }
 
-func (f *fanSrcFilter) flush(clientID string, parentBatchID string) {
+func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
 	byFrom, ok := f.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(f.state, clientID)
 
 	foPart := make(map[int][]protocol.Transaction)
 	fiPart := make(map[int][]protocol.Transaction)
@@ -119,14 +120,21 @@ func (f *fanSrcFilter) flush(clientID string, parentBatchID string) {
 	log.Printf("[fan_src_filter] flush client=%s total_sources=%d parent_batch=%s",
 		clientID, len(byFrom), parentBatchID)
 
-	sendPartitioned(f.outFOMW, clientID, foPart, f.foKeyPrefix)
-	sendPartitioned(f.outFIMW, clientID, fiPart, f.fiKeyPrefix)
+	if !sendPartitioned(f.outFOMW, clientID, foPart, f.foKeyPrefix) {
+		return false
+	}
+	if !sendPartitioned(f.outFIMW, clientID, fiPart, f.fiKeyPrefix) {
+		return false
+	}
+
+	delete(f.state, clientID)
 
 	sendEOF(f.outFOMW, clientID, f.foKeyPrefix, f.foPartitions)
 	sendEOF(f.outFIMW, clientID, f.fiKeyPrefix, f.fiPartitions)
+	return true
 }
 
-func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[int][]protocol.Transaction, keyPrefix string) {
+func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[int][]protocol.Transaction, keyPrefix string) bool {
 	parts := make([]int, 0, len(partitioned))
 	instance := config.MustEnvInt("INSTANCE_ID")
 	for p := range partitioned {
@@ -146,13 +154,16 @@ func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[
 		data, err := json.Marshal(out)
 		if err != nil {
 			log.Printf("[fan_src_filter] marshal batch key=%s: %v", key, err)
-			continue
+			return false
 		}
 		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
 			log.Printf("[fan_src_filter] send batch key=%s: %v", key, err)
+			return false
 		}
 	}
+	return true
 }
+
 
 func sendEOF(mw middleware.Middleware, clientID, keyPrefix string, partitions int) {
 	instance := config.MustEnvInt("INSTANCE_ID")

@@ -42,9 +42,10 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 		}
 	}
 	if batch.Type == protocol.BatchTypeEOF {
-		f.flush(batch.ClientID)
-
-		return batch, true
+		if f.flush(batch.ClientID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
@@ -75,12 +76,11 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 	return protocol.Batch{}, false
 }
 
-func (f *fanIn) flush(clientID string) {
+func (f *fanIn) flush(clientID string) bool {
 	byTo, ok := f.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(f.state, clientID)
 	log.Printf("[fan_in] flush client=%s dest_accounts=%d", clientID, len(byTo))
 
 	partitioned := make(map[int][]fanInResult)
@@ -117,6 +117,7 @@ func (f *fanIn) flush(clientID string) {
 			if len(partitioned[partition]) >= chunkSize {
 				if err := f.sendPartition(clientID, partitioned[partition], partition, chunkCountByPartition[partition]); err != nil {
 					log.Printf("[fan_in] send partition=%d: %v", partition, err)
+					return false
 				}
 
 				partitioned[partition] = nil
@@ -133,10 +134,13 @@ func (f *fanIn) flush(clientID string) {
 
 		if err := f.sendPartition(clientID, results, partition, chunkCountByPartition[partition]); err != nil {
 			log.Printf("[fan_in] send partition=%d: %v", partition, err)
+			return false
 		}
 	}
 
+	delete(f.state, clientID)
 	f.sendEOF(clientID)
+	return true
 }
 
 func (f *fanIn) sendPartition(clientID string, results []fanInResult, partition int, chunkCount int) error {

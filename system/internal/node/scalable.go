@@ -364,6 +364,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			// If this client's EOF was already forwarded, this is a stale data
 			// EOF (redelivery) — no need to broadcast it.
 			if _, done := s.eofCompleted[batch.ClientID]; done {
+				log.Printf("[%s] stale data-path EOF for client=%s — already completed, discarding", s.name, batch.ClientID)
 				s.cond.Broadcast()
 				s.mu.Unlock()
 				ack()
@@ -382,19 +383,6 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		}
 
 		s.mu.Lock()
-		// If this client's EOF was already completed (recovered from persisted
-		// state), all remaining data for this client is stale — ack without
-		// processing. The completed node already forwarded the EOF downstream.
-		if _, done := s.eofCompleted[batch.ClientID]; done {
-			s.globalPending--
-			s.cond.Broadcast()
-			s.mu.Unlock()
-			ack()
-			return
-		}
-		// Wait if handleEOF is currently sending the downstream EOF for this
-		// client. This closes the TOCTOU window where a late data batch would
-		// otherwise reach outputMW after the EOF.
 		for s.eofInFlight[batch.ClientID] {
 			s.cond.Wait()
 		}
@@ -528,8 +516,12 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 		// Hold the lock through drain + eofInFlight to close the window
 		// where another broadcast for the same client could arrive between
 		// the readiness check and the forward preparation.
-		for s.globalPending > 0 || s.clientPending[clientID] > 0 {
-			s.cond.Wait()
+		if s.globalPending > 0 || s.clientPending[clientID] > 0 {
+			log.Printf("[%s] drain start for client=%s: globalPending=%d clientPending=%d", s.name, clientID, s.globalPending, s.clientPending[clientID])
+			for s.globalPending > 0 || s.clientPending[clientID] > 0 {
+				s.cond.Wait()
+			}
+			log.Printf("[%s] drain done for client=%s", s.name, clientID)
 		}
 		// Mark this client's EOF as in-flight so that handleData blocks any
 		// new batches for this client until the downstream EOF is sent.

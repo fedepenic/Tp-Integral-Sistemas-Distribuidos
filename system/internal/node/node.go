@@ -191,16 +191,6 @@ func (n *Node) runPersistent(inputMW, outputMW middleware.Middleware, fn Process
 			log.Printf("[node] EOF barrier complete for client=%s — forwarding", clientID)
 		}
 
-		// If this client's EOF was already forwarded (recovered from persisted
-		// state), data batches after that point are stale — ack without processing.
-		if batch.Type != protocol.BatchTypeEOF {
-			if _, forwarded := st.EOFForwarded[batch.ClientID]; forwarded {
-				log.Printf("[node] data batch after EOF forward for client=%s — discarding", batch.ClientID)
-				ack()
-				return
-			}
-		}
-
 		result, ok := fn(batch)
 		if !ok {
 			ack()
