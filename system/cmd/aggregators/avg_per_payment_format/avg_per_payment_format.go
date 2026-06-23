@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
@@ -12,6 +13,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
+
+const maxRetries = 5
 
 const chunkSize = 1000
 
@@ -37,13 +40,15 @@ func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat
 func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
 		if m.dedup.Seen(batch.BatchID) {
-			log.Printf("HAY UN DUPLICADO ACA MIRA duplicate batch: %s", batch.BatchID)
+			log.Printf("[avg_per_payment_format] duplicate batch: %s", batch.BatchID)
 			return protocol.Batch{}, false
 		}
 	}
 	if batch.Type == protocol.BatchTypeEOF {
-		m.flush(batch.ClientID)
-		return batch, true
+		if m.flush(batch.ClientID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
@@ -63,12 +68,12 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 	return protocol.Batch{}, false
 }
 
-func (m *avgPerPaymentFormat) flush(clientID string) {
+func (m *avgPerPaymentFormat) flush(clientID string) bool {
 	formats, ok := m.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(m.state, clientID)
+
 	keys := make([]string, 0, len(formats))
 	for format := range formats {
 		keys = append(keys, format)
@@ -96,11 +101,8 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 				p,
 				chunkCountByPartition[p],
 			); err != nil {
-				log.Printf(
-					"[avg_per_payment_format] send partition=%d: %v",
-					p,
-					err,
-				)
+				log.Printf("[avg_per_payment_format] send partition=%d: %v", p, err)
+				return false
 			}
 			partitioned[p] = nil
 			chunkCountByPartition[p]++
@@ -117,15 +119,14 @@ func (m *avgPerPaymentFormat) flush(clientID string) {
 			partition,
 			chunkCountByPartition[partition],
 		); err != nil {
-			log.Printf(
-				"[avg_per_payment_format] send partition=%d: %v",
-				partition,
-				err,
-			)
+			log.Printf("[avg_per_payment_format] send partition=%d: %v", partition, err)
+			return false
 		}
 	}
 
+	delete(m.state, clientID)
 	m.sendEOF(clientID)
+	return true
 }
 
 func (m *avgPerPaymentFormat) sendPartition(
@@ -158,10 +159,18 @@ func (m *avgPerPaymentFormat) sendPartition(
 		return err
 	}
 
-	return m.outputMW.SendWithKey(
-		middleware.Message{Body: string(data)},
-		routingKey,
-	)
+	msg := middleware.Message{Body: string(data)}
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := m.outputMW.SendWithKey(msg, routingKey); err != nil {
+			lastErr = err
+			log.Printf("[avg_per_payment_format] send partition=%d attempt=%d/%d: %v", partition, i+1, maxRetries, err)
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 func (m *avgPerPaymentFormat) sendEOF(clientID string) {

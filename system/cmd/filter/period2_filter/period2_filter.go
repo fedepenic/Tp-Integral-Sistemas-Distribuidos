@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
@@ -14,12 +16,13 @@ import (
 )
 
 func newProcess(outputMW middleware.Middleware, keyPrefix string, partitions int) node.ProcessFunc {
+	instanceID := config.MustEnvInt("INSTANCE_ID")
 	start, _ := time.Parse(dateLayout, periodStart)
 	end, _ := time.Parse(dateLayout, periodEnd)
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.Type == protocol.BatchTypeEOF {
-			sendEOF(outputMW, batch, keyPrefix, partitions)
+			sendEOF(outputMW, batch, keyPrefix, partitions, instanceID)
 			return batch, true
 		}
 		if batch.Type != protocol.BatchTypeTransactions {
@@ -73,7 +76,8 @@ func sendPartitioned(mw middleware.Middleware, clientID string, inputs []filterI
 	}
 }
 
-func sendEOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int) {
+func sendEOF(mw middleware.Middleware, batch protocol.Batch, keyPrefix string, partitions int, instanceID int) {
+	batch.BatchID = fmt.Sprintf("%s:i%d", batch.BatchID, instanceID)
 	data, err := json.Marshal(batch)
 	if err != nil {
 		log.Printf("[period2_filter] marshal EOF: %v", err)

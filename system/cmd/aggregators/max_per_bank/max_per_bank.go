@@ -33,8 +33,10 @@ func newMaxPerBank(outputMW middleware.Middleware) *maxPerBank {
 
 func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.Type == protocol.BatchTypeEOF {
-		m.flush(batch.ClientID)
-		return batch, true
+		if m.flush(batch.ClientID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	banks, ok := m.state[batch.ClientID]
 	if !ok {
@@ -47,12 +49,11 @@ func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 	return protocol.Batch{}, false
 }
 
-func (m *maxPerBank) flush(clientID string) {
+func (m *maxPerBank) flush(clientID string) bool {
 	banks, ok := m.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(m.state, clientID)
 
 	keys := make([]string, 0, len(banks))
 	for bankID := range banks {
@@ -79,6 +80,7 @@ func (m *maxPerBank) flush(clientID string) {
 		if len(partitioned[partition]) >= chunkSize {
 			if err := m.sendPartition(clientID, partitioned[partition], partition, chunkCountByPartition[partition]); err != nil {
 				log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
+				return false
 			}
 
 			partitioned[partition] = nil
@@ -93,10 +95,13 @@ func (m *maxPerBank) flush(clientID string) {
 
 		if err := m.sendPartition(clientID, results, partition, chunkCountByPartition[partition]); err != nil {
 			log.Printf("[max_per_bank] send partition=%d: %v", partition, err)
+			return false
 		}
 	}
 
+	delete(m.state, clientID)
 	m.sendEOF(clientID)
+	return true
 }
 
 func (m *maxPerBank) sendPartition(clientID string, results []maxPerBankResult, partition int, chunkCount int) error {

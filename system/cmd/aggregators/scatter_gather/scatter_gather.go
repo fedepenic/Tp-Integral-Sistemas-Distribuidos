@@ -37,8 +37,10 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 		}
 	}
 	if batch.Type == protocol.BatchTypeEOF {
-		sg.flush(batch.ClientID)
-		return batch, true
+		if sg.flush(batch.ClientID) {
+			return batch, true
+		}
+		return protocol.Batch{}, false
 	}
 	if batch.Type != protocol.BatchTypeScatterGather {
 		return protocol.Batch{}, false
@@ -68,12 +70,11 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 	return protocol.Batch{}, false
 }
 
-func (sg *scatterGather) flush(clientID string) {
+func (sg *scatterGather) flush(clientID string) bool {
 	byKey, ok := sg.state[clientID]
 	if !ok {
-		return
+		return true
 	}
-	delete(sg.state, clientID)
 
 	keys := make([]string, 0, len(byKey))
 	for k := range byKey {
@@ -116,6 +117,7 @@ func (sg *scatterGather) flush(clientID string) {
 				chunkCount,
 			); err != nil {
 				log.Printf("[scatter_gather] send chunk=%d: %v", chunkCount, err)
+				return false
 			}
 
 			chunk = make([]scatterGatherResult, 0, chunkSize)
@@ -130,6 +132,7 @@ func (sg *scatterGather) flush(clientID string) {
 			chunkCount,
 		); err != nil {
 			log.Printf("[scatter_gather] send chunk=%d: %v", chunkCount, err)
+			return false
 		}
 	}
 
@@ -140,7 +143,9 @@ func (sg *scatterGather) flush(clientID string) {
 		passed,
 	)
 
+	delete(sg.state, clientID)
 	sg.sendEOF(clientID)
+	return true
 }
 
 func (sg *scatterGather) sendChunk(
