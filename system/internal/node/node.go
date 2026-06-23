@@ -191,6 +191,16 @@ func (n *Node) runPersistent(inputMW, outputMW middleware.Middleware, fn Process
 			log.Printf("[node] EOF barrier complete for client=%s — forwarding", clientID)
 		}
 
+		// If the EOF was already forwarded for this client (recovery case),
+		// discard any data batches that arrive after the stream completed.
+		if batch.Type != protocol.BatchTypeEOF {
+			if _, forwarded := st.EOFForwarded[batch.ClientID]; forwarded {
+				log.Printf("[node] data after EOF for client=%s — discarding", batch.ClientID)
+				ack()
+				return
+			}
+		}
+
 		result, ok := fn(batch)
 		if !ok {
 			ack()

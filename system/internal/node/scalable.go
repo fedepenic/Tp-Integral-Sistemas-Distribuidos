@@ -382,9 +382,32 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			return
 		}
 
+		// If this client's EOF was already completed (recovery case),
+		// discard any data batches that arrive after the stream completed.
+		// Hold the lock across the check, in-flight wait, and state update
+		// to prevent handleEOF from completing between the check and the
+		// pending adjustment (TOCTOU race).
 		s.mu.Lock()
+		if _, done := s.eofCompleted[batch.ClientID]; done {
+			log.Printf("[%s] data after EOF for client=%s — already completed, discarding", s.name, batch.ClientID)
+			s.globalPending--
+			s.cond.Broadcast()
+			s.mu.Unlock()
+			ack()
+			return
+		}
 		for s.eofInFlight[batch.ClientID] {
 			s.cond.Wait()
+		}
+		// Re-check after wait: handleEOF may have completed and set
+		// eofCompleted while cond.Wait released the lock.
+		if _, done := s.eofCompleted[batch.ClientID]; done {
+			log.Printf("[%s] data after EOF for client=%s — completed during wait, discarding", s.name, batch.ClientID)
+			s.globalPending--
+			s.cond.Broadcast()
+			s.mu.Unlock()
+			ack()
+			return
 		}
 		s.globalPending--
 		s.clientPending[batch.ClientID]++

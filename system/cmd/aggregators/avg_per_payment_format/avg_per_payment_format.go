@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
@@ -12,6 +13,8 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
+
+const maxRetries = 5
 
 const chunkSize = 1000
 
@@ -156,10 +159,18 @@ func (m *avgPerPaymentFormat) sendPartition(
 		return err
 	}
 
-	return m.outputMW.SendWithKey(
-		middleware.Message{Body: string(data)},
-		routingKey,
-	)
+	msg := middleware.Message{Body: string(data)}
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := m.outputMW.SendWithKey(msg, routingKey); err != nil {
+			lastErr = err
+			log.Printf("[avg_per_payment_format] send partition=%d attempt=%d/%d: %v", partition, i+1, maxRetries, err)
+			time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 func (m *avgPerPaymentFormat) sendEOF(clientID string) {
