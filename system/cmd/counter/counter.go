@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
@@ -11,12 +12,44 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-// newProcess returns the counter's business logic: accumulate transaction
-// counts per client, then on EOF emit a BatchTypeCount batch followed by
-// the EOF. node.Node handles upstream EOF counting before calling this.
+type counterState struct {
+	Counts map[string]int64 `json:"counts"`
+}
+
+type counterDelta struct {
+	ClientID string `json:"client_id"`
+	Count    int64  `json:"count"`
+}
+
 func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 	txnCounts := make(map[string]int64)
 	deduper := dedup.New()
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(1000)
+	sm := node.NewStateManager("counter", "counter", stateDir, freq)
+
+	cp, entries, err := sm.Recover()
+	if err == nil && cp != nil {
+		var st counterState
+		if json.Unmarshal(cp.State, &st) == nil {
+			txnCounts = st.Counts
+			if txnCounts == nil {
+				txnCounts = make(map[string]int64)
+			}
+			log.Printf("[counter] recovered %d clients from checkpoint", len(txnCounts))
+		}
+		for _, entry := range entries {
+			var d counterDelta
+			if json.Unmarshal(entry.Delta, &d) == nil {
+				txnCounts[d.ClientID] += d.Count
+				sm.MarkApplied(entry.BatchID)
+				deduper.Mark(entry.BatchID)
+			}
+		}
+		log.Printf("[counter] recovery done: %d WAL entries replayed", len(entries))
+	}
+
+	batchCount := 0
 
 	return func(batch protocol.Batch) (protocol.Batch, bool) {
 		if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
@@ -27,17 +60,45 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 		}
 
 		if batch.Type == protocol.BatchTypeTransactions {
-			txnCounts[batch.ClientID] += int64(len(batch.Transactions))
-			deduper.Mark(batch.BatchID)
+			d := counterDelta{ClientID: batch.ClientID, Count: int64(len(batch.Transactions))}
+
+			if sm.Enabled() && batch.BatchID != "" {
+				deltaData, err := json.Marshal(d)
+				if err != nil {
+					log.Printf("[counter] marshal delta: %v", err)
+					return protocol.Batch{}, false
+				}
+				if err := sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+					log.Printf("[counter] WAL append: %v", err)
+					return protocol.Batch{}, false
+				}
+			}
+
+			txnCounts[batch.ClientID] += d.Count
+
+			if batch.BatchID != "" {
+				deduper.Mark(batch.BatchID)
+				sm.MarkApplied(batch.BatchID)
+			}
+
+			batchCount++
+			if sm.Enabled() && batchCount%freq == 0 {
+				stateData, _ := json.Marshal(counterState{Counts: txnCounts})
+				if err := sm.SaveCheckpoint(stateData); err != nil {
+					log.Printf("[counter] checkpoint: %v", err)
+				}
+			}
+
 			return protocol.Batch{}, false
 		}
 
 		if batch.Type == protocol.BatchTypeEOF {
-			total := txnCounts[batch.ClientID]
-			delete(txnCounts, batch.ClientID)
+			total, exists := txnCounts[batch.ClientID]
+			if exists {
+				delete(txnCounts, batch.ClientID)
+			}
 			log.Printf("[counter] client=%s total=%d — emitting count batch", batch.ClientID, total)
 
-			// Send the count batch directly; the node will send the EOF via its normal path.
 			sendBatch(outputMW, protocol.Batch{
 				BatchID:  id.Aggregator("counter", batch.ClientID, 0, 0, 1),
 				Type:     protocol.BatchTypeCount,

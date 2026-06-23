@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 )
@@ -16,5 +18,8 @@ func main() {
 	defer outputMW.Close()
 
 	m := newMaxPerBank(outputMW)
+	m.recover()
+
+	log.Printf("[max_per_bank] starting with %d clients in state", len(m.state))
 	svc.Run(inputMW, outputMW, m.process)
 }

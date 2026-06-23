@@ -39,9 +39,13 @@ func main() {
 
 	svc := node.NewJoin("join_q3", avgUpstream, txnUpstream, classify)
 
-	log.Printf("[join_q3] started avg_upstream=%d txn_upstream=%d", avgUpstream, txnUpstream)
+	j := newJoinQ3()
+	j.recover()
 
-	svc.Run(inputMW, outputMW, newProcess())
+	log.Printf("[join_q3] started avg_upstream=%d txn_upstream=%d", avgUpstream, txnUpstream)
+	log.Printf("[join_q3] recovered %d clients", len(j.states))
+
+	svc.Run(inputMW, outputMW, j.process)
 }
 
 func buildOutputMW(conn middleware.ConnSettings) (middleware.Middleware, error) {

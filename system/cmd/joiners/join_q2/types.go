@@ -10,6 +10,13 @@ type maxPerBankResult struct {
 }
 
 type joinQ2State struct {
-	accountsByBank   map[string]protocol.Account
-	pendingMaxByBank map[string][]maxPerBankResult
+	AccountsByBank   map[string]protocol.Account    `json:"accounts_by_bank"`
+	PendingMaxByBank map[string][]maxPerBankResult   `json:"pending_max_by_bank"`
+}
+
+type joinQ2Delta struct {
+	ClientID   string                       `json:"client_id"`
+	Accounts   []protocol.Account           `json:"accounts,omitempty"`
+	MaxResults []maxPerBankResult           `json:"max_results,omitempty"`
+	Resolved   []maxPerBankResult           `json:"resolved,omitempty"`
 }

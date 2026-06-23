@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 )
@@ -24,5 +26,8 @@ func main() {
 	fiPartitions := config.MustEnvInt("OUTPUT_FI_PARTITIONS")
 
 	f := newFanSrcFilter(outFOMW, outFIMW, foKeyPrefix, foPartitions, fiKeyPrefix, fiPartitions)
+	f.recover()
+
+	log.Printf("[fan_src_filter] starting with %d clients in state", len(f.state))
 	svc.Run(inputMW, outFOMW, f.process)
 }

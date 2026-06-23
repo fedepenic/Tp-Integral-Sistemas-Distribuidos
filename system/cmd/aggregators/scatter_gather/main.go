@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 )
@@ -16,5 +18,8 @@ func main() {
 	defer outputMW.Close()
 
 	sg := newScatterGather(outputMW)
+	sg.recover()
+
+	log.Printf("[scatter_gather] starting with %d clients in state", len(sg.state))
 	svc.Run(inputMW, outputMW, newProcess(sg))
 }

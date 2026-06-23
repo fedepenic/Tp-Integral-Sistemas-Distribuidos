@@ -46,9 +46,13 @@ func main() {
 
 	svc := node.NewJoin("joiner_sg", foUpstream, fiUpstream, classify)
 
-	log.Printf("[joiner_sg] started fo_upstream=%d fi_upstream=%d output_partitions=%d", foUpstream, fiUpstream, outputPartitions)
+	j := newJoinerSG(outputMW, outputKeyPrefix, outputPartitions)
+	j.recover()
 
-	svc.Run(inputMW, outputMW, newProcess(outputMW, outputKeyPrefix, outputPartitions))
+	log.Printf("[joiner_sg] started fo_upstream=%d fi_upstream=%d output_partitions=%d", foUpstream, fiUpstream, outputPartitions)
+	log.Printf("[joiner_sg] recovered %d clients", len(j.states))
+
+	svc.Run(inputMW, outputMW, j.process)
 }
 
 func mustEnv(key string) string {

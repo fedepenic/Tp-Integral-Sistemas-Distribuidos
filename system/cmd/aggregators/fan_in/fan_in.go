@@ -9,6 +9,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
@@ -16,21 +17,24 @@ import (
 const chunkSize = 1000
 
 type fanIn struct {
-	// clientID → toKey → entry
 	state            map[string]map[string]*fanInEntry
 	outputMW         middleware.Middleware
 	outputKeyPrefix  string
 	outputPartitions int
 	deduper          *dedup.BatchDeduplicator
+	sm               *node.StateManager
 }
 
 func newFanIn(outputMW middleware.Middleware) *fanIn {
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(1000)
 	return &fanIn{
 		state:            make(map[string]map[string]*fanInEntry),
 		outputMW:         outputMW,
 		outputKeyPrefix:  config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinersg"),
 		outputPartitions: config.MustEnvInt("OUTPUT_PARTITIONS"),
 		deduper:          dedup.New(),
+		sm:               node.NewStateManager("fan_in", "fan_in", stateDir, freq),
 	}
 }
 
@@ -52,28 +56,115 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 	}
 	log.Printf("[fan_in] batch client=%s txns=%d", batch.ClientID, len(batch.Transactions))
 
-	byTo, ok := f.state[batch.ClientID]
-	if !ok {
-		byTo = make(map[string]*fanInEntry)
-		f.state[batch.ClientID] = byTo
+	// 1. Compute delta
+	delta := f.computeDelta(batch)
+
+	// 2. Write delta to WAL
+	if f.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[fan_in] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := f.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[fan_in] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	// 3. Apply delta
+	f.applyDelta(delta)
+
+	// 4. Mark & checkpoint
+	if batch.BatchID != "" {
+		f.deduper.Mark(batch.BatchID)
+		f.sm.MarkApplied(batch.BatchID)
+	}
+
+	if f.sm.ShouldCheckpoint() {
+		f.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (f *fanIn) computeDelta(batch protocol.Batch) fanInDelta {
+	d := fanInDelta{
+		ClientID: batch.ClientID,
+		Entries:  make(map[string]fanInEntry),
 	}
 	for _, tx := range batch.Transactions {
 		toKey := tx.ToBank + "|" + tx.ToAccount
-		entry, ok := byTo[toKey]
+		entry, ok := d.Entries[toKey]
 		if !ok {
-			entry = &fanInEntry{
-				toBank: tx.ToBank,
-				toAcct: tx.ToAccount,
+			entry = fanInEntry{
+				ToBank: tx.ToBank,
+				ToAcct: tx.ToAccount,
 			}
-			byTo[toKey] = entry
 		}
-		entry.refs = append(entry.refs, accountRef{bank: tx.FromBank, account: tx.FromAccount})
+		entry.Refs = append(entry.Refs, accountRef{Bank: tx.FromBank, Account: tx.FromAccount})
+		d.Entries[toKey] = entry
+	}
+	return d
+}
+
+func (f *fanIn) applyDelta(delta fanInDelta) {
+	byTo, ok := f.state[delta.ClientID]
+	if !ok {
+		byTo = make(map[string]*fanInEntry)
+		f.state[delta.ClientID] = byTo
+	}
+	for key, entry := range delta.Entries {
+		existing, ok := byTo[key]
+		if !ok {
+			existing = &fanInEntry{ToBank: entry.ToBank, ToAcct: entry.ToAcct}
+			byTo[key] = existing
+		}
+		existing.Refs = append(existing.Refs, entry.Refs...)
+	}
+}
+
+func (f *fanIn) checkpoint() {
+	data, err := json.Marshal(f.state)
+	if err != nil {
+		log.Printf("[fan_in] marshal state: %v", err)
+		return
+	}
+	if err := f.sm.SaveCheckpoint(data); err != nil {
+		log.Printf("[fan_in] save checkpoint: %v", err)
+	}
+}
+
+func (f *fanIn) recover() {
+	cp, entries, err := f.sm.Recover()
+	if err != nil {
+		log.Printf("[fan_in] recovery error: %v", err)
+		return
+	}
+	if cp == nil {
+		log.Printf("[fan_in] no checkpoint — starting fresh")
+		return
 	}
 
-	if batch.BatchID != "" {
-		f.deduper.Mark(batch.BatchID)
+	var state map[string]map[string]*fanInEntry
+	if err := json.Unmarshal(cp.State, &state); err != nil {
+		log.Printf("[fan_in] unmarshal checkpoint: %v", err)
+		return
 	}
-	return protocol.Batch{}, false
+	f.state = state
+	log.Printf("[fan_in] recovered %d clients from checkpoint", len(state))
+
+	for _, entry := range entries {
+		var delta fanInDelta
+		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
+			log.Printf("[fan_in] invalid WAL entry: %v", err)
+			continue
+		}
+		f.applyDelta(delta)
+		f.sm.MarkApplied(entry.BatchID)
+		f.deduper.Mark(entry.BatchID)
+	}
+	log.Printf("[fan_in] recovery done: %d WAL entries replayed", len(entries))
 }
 
 func (f *fanIn) flush(clientID string) bool {
@@ -95,13 +186,13 @@ func (f *fanIn) flush(clientID string) bool {
 	chunkCountByPartition := make(map[int]int)
 	for _, key := range keys {
 		entry := byTo[key]
-		for _, from := range entry.refs {
+		for _, from := range entry.Refs {
 			total++
 			res := fanInResult{
-				MiddleBank:    from.bank,
-				MiddleAccount: from.account,
-				ToBank:        entry.toBank,
-				ToAccount:     entry.toAcct,
+				MiddleBank:    from.Bank,
+				MiddleAccount: from.Account,
+				ToBank:        entry.ToBank,
+				ToAccount:     entry.ToAcct,
 			}
 
 			partition := worker.PartitionForKey(

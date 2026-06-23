@@ -9,6 +9,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
@@ -16,7 +17,6 @@ import (
 const minDistinctDests = 5
 
 type fanSrcFilter struct {
-	// clientID → fromKey → srcEntry
 	state        map[string]map[string]*srcEntry
 	outFOMW      middleware.Middleware
 	outFIMW      middleware.Middleware
@@ -25,6 +25,7 @@ type fanSrcFilter struct {
 	fiKeyPrefix  string
 	fiPartitions int
 	dedup        *dedup.BatchDeduplicator
+	sm           *node.StateManager
 }
 
 func newFanSrcFilter(
@@ -32,6 +33,8 @@ func newFanSrcFilter(
 	foKeyPrefix string, foPartitions int,
 	fiKeyPrefix string, fiPartitions int,
 ) *fanSrcFilter {
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(1000)
 	return &fanSrcFilter{
 		state:        make(map[string]map[string]*srcEntry),
 		outFOMW:      outFOMW,
@@ -41,6 +44,7 @@ func newFanSrcFilter(
 		fiKeyPrefix:  fiKeyPrefix,
 		fiPartitions: fiPartitions,
 		dedup:        dedup.New(),
+		sm:           node.NewStateManager("fan_src_filter", "fan_src_filter", stateDir, freq),
 	}
 }
 
@@ -63,30 +67,124 @@ func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
 	}
 	log.Printf("[fan_src_filter] batch client=%s txns=%d", batch.ClientID, len(batch.Transactions))
 
-	byFrom, ok := f.state[batch.ClientID]
-	if !ok {
-		byFrom = make(map[string]*srcEntry)
-		f.state[batch.ClientID] = byFrom
+	// 1. Compute delta
+	delta := f.computeDelta(batch)
+
+	// 2. Write delta to WAL
+	if f.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[fan_src_filter] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := f.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[fan_src_filter] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	// 3. Apply delta
+	f.applyDelta(delta)
+
+	// 4. Mark & checkpoint
+	if batch.BatchID != "" {
+		f.dedup.Mark(batch.BatchID)
+		f.sm.MarkApplied(batch.BatchID)
+	}
+
+	if f.sm.ShouldCheckpoint() {
+		f.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (f *fanSrcFilter) computeDelta(batch protocol.Batch) srcDelta {
+	d := srcDelta{
+		ClientID: batch.ClientID,
+		Entries:  make(map[string]*srcEntry),
 	}
 	for _, tx := range batch.Transactions {
 		fromKey := tx.FromBank + "|" + tx.FromAccount
-		entry, ok := byFrom[fromKey]
+		entry, ok := d.Entries[fromKey]
 		if !ok {
 			entry = &srcEntry{
-				fromBank:   tx.FromBank,
-				fromAcct:   tx.FromAccount,
-				distinctTo: make(map[string]struct{}),
+				FromBank:   tx.FromBank,
+				FromAcct:   tx.FromAccount,
+				DistinctTo: make(map[string]bool),
 			}
-			byFrom[fromKey] = entry
+			d.Entries[fromKey] = entry
 		}
-		entry.distinctTo[tx.ToBank+"|"+tx.ToAccount] = struct{}{}
-		entry.transactions = append(entry.transactions, tx)
+		entry.DistinctTo[tx.ToBank+"|"+tx.ToAccount] = true
+		entry.Transactions = append(entry.Transactions, tx)
+	}
+	return d
+}
+
+func (f *fanSrcFilter) applyDelta(delta srcDelta) {
+	byFrom, ok := f.state[delta.ClientID]
+	if !ok {
+		byFrom = make(map[string]*srcEntry)
+		f.state[delta.ClientID] = byFrom
+	}
+	for key, entry := range delta.Entries {
+		existing, ok := byFrom[key]
+		if !ok {
+			existing = &srcEntry{
+				FromBank:   entry.FromBank,
+				FromAcct:   entry.FromAcct,
+				DistinctTo: make(map[string]bool),
+			}
+			byFrom[key] = existing
+		}
+		for k := range entry.DistinctTo {
+			existing.DistinctTo[k] = true
+		}
+		existing.Transactions = append(existing.Transactions, entry.Transactions...)
+	}
+}
+
+func (f *fanSrcFilter) checkpoint() {
+	data, err := json.Marshal(f.state)
+	if err != nil {
+		log.Printf("[fan_src_filter] marshal state: %v", err)
+		return
+	}
+	if err := f.sm.SaveCheckpoint(data); err != nil {
+		log.Printf("[fan_src_filter] save checkpoint: %v", err)
+	}
+}
+
+func (f *fanSrcFilter) recover() {
+	cp, entries, err := f.sm.Recover()
+	if err != nil {
+		log.Printf("[fan_src_filter] recovery error: %v", err)
+		return
+	}
+	if cp == nil {
+		log.Printf("[fan_src_filter] no checkpoint — starting fresh")
+		return
 	}
 
-	if batch.BatchID != "" {
-		f.dedup.Mark(batch.BatchID)
+	var state map[string]map[string]*srcEntry
+	if err := json.Unmarshal(cp.State, &state); err != nil {
+		log.Printf("[fan_src_filter] unmarshal checkpoint: %v", err)
+		return
 	}
-	return protocol.Batch{}, false
+	f.state = state
+	log.Printf("[fan_src_filter] recovered %d clients from checkpoint", len(state))
+
+	for _, entry := range entries {
+		var delta srcDelta
+		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
+			log.Printf("[fan_src_filter] invalid WAL entry: %v", err)
+			continue
+		}
+		f.applyDelta(delta)
+		f.sm.MarkApplied(entry.BatchID)
+		f.dedup.Mark(entry.BatchID)
+	}
+	log.Printf("[fan_src_filter] recovery done: %d WAL entries replayed", len(entries))
 }
 
 func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
@@ -106,10 +204,10 @@ func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
 
 	for _, key := range fromKeys {
 		entry := byFrom[key]
-		if len(entry.distinctTo) <= minDistinctDests {
+		if len(entry.DistinctTo) <= minDistinctDests {
 			continue
 		}
-		for _, tx := range entry.transactions {
+		for _, tx := range entry.Transactions {
 			foP := worker.PartitionForKey(tx.FromBank+"|"+tx.FromAccount, f.foPartitions)
 			foPart[foP] = append(foPart[foP], tx)
 			fiP := worker.PartitionForKey(tx.ToBank+"|"+tx.ToAccount, f.fiPartitions)
@@ -163,7 +261,6 @@ func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[
 	}
 	return true
 }
-
 
 func sendEOF(mw middleware.Middleware, clientID, keyPrefix string, partitions int) {
 	instance := config.MustEnvInt("INSTANCE_ID")

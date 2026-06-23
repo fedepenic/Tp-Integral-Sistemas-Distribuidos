@@ -1,17 +1,21 @@
 package main
 
 type maxPerBankState struct {
-	bankID        string
-	bankName      string
-	sourceAccount string
-	maxAmountUSD  float64
-	hasValue      bool
+	BankID        string  `json:"bank_id"`
+	BankName      string  `json:"bank_name"`
+	SourceAccount string  `json:"source_account"`
+	MaxAmountUSD  float64 `json:"max_amount_usd"`
+	HasValue      bool    `json:"has_value"`
 }
 
-// maxPerBankResult is the record sent downstream to join_q2.
 type maxPerBankResult struct {
 	BankID        string  `json:"bank_id"`
 	BankName      string  `json:"bank_name"`
 	SourceAccount string  `json:"source_account"`
 	MaxAmountUSD  float64 `json:"max_amount_usd"`
+}
+
+type maxPerBankDelta struct {
+	ClientID string                     `json:"client_id"`
+	Banks    map[string]maxPerBankState `json:"banks"`
 }

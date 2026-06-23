@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 )
@@ -16,5 +18,8 @@ func main() {
 	defer outputMW.Close()
 
 	f := newFanOut(outputMW)
+	f.recover()
+
+	log.Printf("[fan_out] starting with %d clients in state", len(f.state))
 	svc.Run(inputMW, outputMW, f.process)
 }

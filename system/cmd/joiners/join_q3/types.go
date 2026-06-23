@@ -8,6 +8,13 @@ type avgPerFormatResult struct {
 }
 
 type joinQ3State struct {
-	thresholdsByFormat map[string]float64
-	pendingTxns        map[string][]protocol.Transaction
+	ThresholdsByFormat map[string]float64              `json:"thresholds_by_format"`
+	PendingTxns        map[string][]protocol.Transaction `json:"pending_txns"`
+}
+
+type joinQ3Delta struct {
+	ClientID  string                        `json:"client_id"`
+	Avgs      []avgPerFormatResult          `json:"avgs,omitempty"`
+	Txns      []protocol.Transaction        `json:"txns,omitempty"`
+	Resolved  []protocol.Transaction        `json:"resolved,omitempty"`
 }

@@ -13,10 +13,6 @@ import (
 func main() {
 	conn := connSettings()
 
-	// Named, durable queue (name == routing key) bound to the input exchange.
-	// Producers (cleaner, max_per_bank) pre-declare these same queues before
-	// publishing, so accounts/maxes are buffered here even if this joiner starts
-	// late — instead of being dropped as unroutable on the direct exchange.
 	inputKey := mustEnv("INPUT_KEY")
 	inputMW, err := middleware.NewSharedQueueMiddleware(
 		inputKey,
@@ -44,9 +40,13 @@ func main() {
 
 	svc := node.NewJoin("join_q2", accountsUpstream, maxUpstream, classify)
 
-	log.Printf("[join_q2] started accounts_upstream=%d max_upstream=%d", accountsUpstream, maxUpstream)
+	j := newJoinQ2(outputMW)
+	j.recover()
 
-	svc.Run(inputMW, outputMW, newProcess())
+	log.Printf("[join_q2] started accounts_upstream=%d max_upstream=%d", accountsUpstream, maxUpstream)
+	log.Printf("[join_q2] recovered %d clients", len(j.states))
+
+	svc.Run(inputMW, outputMW, j.process)
 }
 
 func mustEnv(key string) string {
