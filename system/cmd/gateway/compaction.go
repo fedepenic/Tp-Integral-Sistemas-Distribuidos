@@ -6,6 +6,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+var (
+	instanceSuffixPattern = regexp.MustCompile(`:i\d+$`)
+	chunkSuffixPattern    = regexp.MustCompile(`_chunk_\d+$`)
+	joinerSuffixPattern   = regexp.MustCompile(`:\d+:\d+$`)
+	hashBatchIDPattern    = regexp.MustCompile(`^[a-zA-Z0-9_]+-[^-]+-\d+-[0-9a-f]{16}$`)
 )
 
 func publishCompactedCSV(stagingPath, tmpPath, finalPath, queryID string) error {
@@ -21,6 +31,7 @@ func publishCompactedCSV(stagingPath, tmpPath, finalPath, queryID string) error 
 	}
 
 	reader := csv.NewReader(in)
+	reader.FieldsPerRecord = -1
 	writer := csv.NewWriter(out)
 
 	if _, err := reader.Read(); err != nil {
@@ -40,7 +51,7 @@ func publishCompactedCSV(stagingPath, tmpPath, finalPath, queryID string) error 
 			_ = out.Close()
 			return fmt.Errorf("read staging record %s: %w", stagingPath, err)
 		}
-		if len(record) < 2 {
+		if !isValidStagingRecord(record, queryID) {
 			continue
 		}
 		if isDuplicateStagingRow(seenRows, record[0], record[1]) {
@@ -90,6 +101,34 @@ func publishCompactedCSV(stagingPath, tmpPath, finalPath, queryID string) error 
 	return nil
 }
 
+func isValidStagingRecord(record []string, queryID string) bool {
+	if len(record) != stagingColumnCount(queryID) {
+		return false
+	}
+	if !isValidBatchID(record[0]) {
+		return false
+	}
+	if _, err := strconv.Atoi(record[1]); err != nil {
+		return false
+	}
+	return true
+}
+
+func stagingColumnCount(queryID string) int {
+	switch queryID {
+	case "1":
+		return 7
+	case "2", "3":
+		return 6
+	case "4":
+		return 4
+	case "5":
+		return 3
+	default:
+		return -1
+	}
+}
+
 func writeFinalHeaders(w *csv.Writer, queryID string) {
 	switch queryID {
 	case "1":
@@ -103,6 +142,81 @@ func writeFinalHeaders(w *csv.Writer, queryID string) {
 	case "5":
 		w.Write([]string{"quantity"})
 	}
+}
+
+func isValidBatchID(batchID string) bool {
+	if batchID == "" {
+		return false
+	}
+	if hashBatchIDPattern.MatchString(batchID) {
+		return true
+	}
+	if isValidBaseBatchID(batchID) {
+		return true
+	}
+	if stripped, ok := stripBatchIDSuffix(batchID); ok {
+		return isValidBatchID(stripped)
+	}
+	return false
+}
+
+func stripBatchIDSuffix(batchID string) (string, bool) {
+	for _, pattern := range []*regexp.Regexp{
+		instanceSuffixPattern,
+		chunkSuffixPattern,
+		joinerSuffixPattern,
+	} {
+		loc := pattern.FindStringIndex(batchID)
+		if loc != nil && loc[1] == len(batchID) {
+			return batchID[:loc[0]], true
+		}
+	}
+	return "", false
+}
+
+func isValidBaseBatchID(batchID string) bool {
+	parts := strings.Split(batchID, ":")
+	switch len(parts) {
+	case 3:
+		return parts[0] == "client" &&
+			parts[1] != "" &&
+			parts[2] == "eof"
+	case 4:
+		if parts[0] == "client" {
+			return parts[1] != "" && isDataBatchType(parts[2]) && isInteger(parts[3])
+		}
+		return parts[0] != "" &&
+			isInteger(parts[1]) &&
+			parts[2] != "" &&
+			parts[3] == "eof"
+	case 5:
+		if parts[0] == "" || parts[1] == "" {
+			return false
+		}
+		if parts[4] == "eof" {
+			return isInteger(parts[2]) && isInteger(parts[3])
+		}
+		return isInteger(parts[2]) && isInteger(parts[3]) && isInteger(parts[4])
+	default:
+		return false
+	}
+}
+
+func isDataBatchType(batchType string) bool {
+	switch batchType {
+	case "transactions", "accounts":
+		return true
+	default:
+		return false
+	}
+}
+
+func isInteger(value string) bool {
+	if value == "" {
+		return false
+	}
+	_, err := strconv.Atoi(value)
+	return err == nil
 }
 
 func isDuplicateStagingRow(seenRows map[string]struct{}, batchID, rowNumber string) bool {

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,6 +26,7 @@ type queryWriter struct {
 	stagingPath   string
 	tmpPath       string
 	headerWritten bool
+	closed        bool
 }
 
 // reporter consumes from the reports queue and writes results to CSV files,
@@ -61,6 +64,10 @@ func (r *reporter) writerFor(clientID, queryID string) (*queryWriter, error) {
 	path := filepath.Join(dir, "query_"+queryID+".csv")
 	stagingPath := filepath.Join(dir, ".query_"+queryID+".staging.csv")
 
+	if err := repairStagingTail(stagingPath); err != nil {
+		return nil, fmt.Errorf("repair staging file %s: %w", stagingPath, err)
+	}
+
 	stagingInfo, statErr := os.Stat(stagingPath)
 	headerWritten := statErr == nil && stagingInfo.Size() > 0
 	f, err := os.OpenFile(stagingPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
@@ -90,19 +97,19 @@ func (r *reporter) closeWriter(clientID, queryID string) error {
 		if err != nil {
 			return fmt.Errorf("create empty file client %s query %s: %w", clientID, queryID, err)
 		}
+		defer delete(r.writers, key)
 		if !w.headerWritten {
 			writeStagingHeaders(w, queryID)
 		}
 		if err := closeAndPublish(w, queryID); err != nil {
 			return fmt.Errorf("close empty file for client %s query %s: %w", clientID, queryID, err)
 		}
-		delete(r.writers, key)
 		return nil
 	}
+	defer delete(r.writers, key)
 	if err := closeAndPublish(w, queryID); err != nil {
 		return fmt.Errorf("close file for client %s query %s: %w", clientID, queryID, err)
 	}
-	delete(r.writers, key)
 	return nil
 }
 
@@ -286,15 +293,74 @@ func reportEOFID(batch protocol.Batch) string {
 }
 
 func closeStaging(w *queryWriter) error {
+	if w.closed {
+		return nil
+	}
 	w.csv.Flush()
 	if err := w.csv.Error(); err != nil {
 		_ = w.file.Close()
+		w.closed = true
 		return fmt.Errorf("flush staging file %s: %w", w.stagingPath, err)
 	}
 	if err := w.file.Close(); err != nil {
+		w.closed = true
 		return fmt.Errorf("close staging file %s: %w", w.stagingPath, err)
 	}
+	w.closed = true
 	return nil
+}
+
+func repairStagingTail(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR, 0o644)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+	if size == 0 {
+		return nil
+	}
+
+	offset, err := lastCompleteLineOffset(file, size)
+	if err != nil {
+		return err
+	}
+	if offset == size {
+		return nil
+	}
+	if err := file.Truncate(offset); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func lastCompleteLineOffset(file *os.File, size int64) (int64, error) {
+	const chunkSize int64 = 4096
+
+	buffer := make([]byte, chunkSize)
+	for end := size; end > 0; {
+		start := end - chunkSize
+		if start < 0 {
+			start = 0
+		}
+		n, err := file.ReadAt(buffer[:end-start], start)
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		if idx := bytes.LastIndexByte(buffer[:n], '\n'); idx >= 0 {
+			return start + int64(idx) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
 }
 
 func closeAndPublish(w *queryWriter, queryID string) error {
