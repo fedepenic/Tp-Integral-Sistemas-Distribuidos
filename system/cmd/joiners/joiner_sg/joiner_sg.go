@@ -29,7 +29,7 @@ type joinerSG struct {
 
 func newJoinerSG(outputMW middleware.Middleware, outputKeyPrefix string, outputPartitions int) *joinerSG {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &joinerSG{
 		states:           make(map[string]sgState),
 		deduper:          dedup.New(),

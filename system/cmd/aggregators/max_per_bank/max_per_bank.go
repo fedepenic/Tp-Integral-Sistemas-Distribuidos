@@ -25,7 +25,7 @@ type maxPerBank struct {
 
 func newMaxPerBank(outputMW middleware.Middleware) *maxPerBank {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &maxPerBank{
 		state:            make(map[string]map[string]maxPerBankState),
 		outputMW:         outputMW,

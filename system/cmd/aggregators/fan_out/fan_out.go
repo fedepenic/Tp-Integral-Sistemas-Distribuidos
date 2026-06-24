@@ -27,7 +27,7 @@ type fanOut struct {
 
 func newFanOut(outputMW middleware.Middleware) *fanOut {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &fanOut{
 		state:            make(map[string]map[string]*fanOutEntry),
 		outputMW:         outputMW,
@@ -51,6 +51,9 @@ func (f *fanOut) process(batch protocol.Batch) (protocol.Batch, bool) {
 			return batch, true
 		}
 		return protocol.Batch{}, false
+	}
+	if batch.Type == protocol.BatchTypeSrcRef {
+		return f.processSrcRef(batch)
 	}
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
@@ -87,6 +90,62 @@ func (f *fanOut) process(batch protocol.Batch) (protocol.Batch, bool) {
 	}
 
 	return protocol.Batch{}, false
+}
+
+func (f *fanOut) processSrcRef(batch protocol.Batch) (protocol.Batch, bool) {
+	if batch.BatchID != "" {
+		if f.deduper.Seen(batch.BatchID) {
+			log.Printf("[fan_out] discarded duplicate src_ref batch client=%s id=%s", batch.ClientID, batch.BatchID)
+			return protocol.Batch{}, false
+		}
+	}
+
+	delta := f.computeDeltaFromSrcRefs(batch)
+
+	if f.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[fan_out] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := f.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[fan_out] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	f.applyDelta(delta)
+
+	if batch.BatchID != "" {
+		f.deduper.Mark(batch.BatchID)
+		f.sm.MarkApplied(batch.BatchID)
+	}
+
+	if f.sm.ShouldCheckpoint() {
+		f.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (f *fanOut) computeDeltaFromSrcRefs(batch protocol.Batch) fanOutDelta {
+	d := fanOutDelta{
+		ClientID: batch.ClientID,
+		Entries:  make(map[string]fanOutEntry),
+	}
+	for _, ref := range batch.SrcRefs {
+		fromKey := ref.FromBank + "|" + ref.FromAccount
+		entry, ok := d.Entries[fromKey]
+		if !ok {
+			entry = fanOutEntry{
+				FromBank: ref.FromBank,
+				FromAcct: ref.FromAccount,
+			}
+		}
+		entry.Refs = append(entry.Refs, accountRef{Bank: ref.ToBank, Account: ref.ToAccount})
+		d.Entries[fromKey] = entry
+	}
+	return d
 }
 
 func (f *fanOut) computeDelta(batch protocol.Batch) fanOutDelta {

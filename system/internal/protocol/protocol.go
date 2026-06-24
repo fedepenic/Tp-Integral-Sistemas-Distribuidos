@@ -14,6 +14,7 @@ const (
 	BatchTypeTransactions  BatchType = "transactions"
 	BatchTypeAccounts      BatchType = "accounts"
 	BatchTypeScatterGather BatchType = "scatter_gather"
+	BatchTypeSrcRef        BatchType = "src_ref"
 	BatchTypeEOF           BatchType = "eof"
 	BatchTypeACK           BatchType = "ack"
 	BatchTypeCount         BatchType = "count"
@@ -51,6 +52,13 @@ type ScatterGatherItem struct {
 	ToAccount     string `json:"to_account"`
 }
 
+type SrcRef struct {
+	FromBank    string `json:"from_bank"`
+	FromAccount string `json:"from_account"`
+	ToBank      string `json:"to_bank"`
+	ToAccount   string `json:"to_account"`
+}
+
 type Batch struct {
 	BatchID            string              `json:"batch_id"`
 	Type               BatchType           `json:"type"`
@@ -60,6 +68,7 @@ type Batch struct {
 	Transactions       []Transaction       `json:"transactions,omitempty"`
 	Accounts           []Account           `json:"accounts,omitempty"`
 	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`
+	SrcRefs            []SrcRef            `json:"src_refs,omitempty"`
 	Records            json.RawMessage     `json:"records,omitempty"`
 	Count              int64               `json:"count,omitempty"`
 }

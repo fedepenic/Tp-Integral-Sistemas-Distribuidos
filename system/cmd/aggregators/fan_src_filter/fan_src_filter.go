@@ -14,7 +14,10 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
-const minDistinctDests = 5
+const (
+	minDistinctDests = 5
+	chunkSize        = 1000
+)
 
 type fanSrcFilter struct {
 	state        map[string]map[string]*srcEntry
@@ -34,7 +37,7 @@ func newFanSrcFilter(
 	fiKeyPrefix string, fiPartitions int,
 ) *fanSrcFilter {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &fanSrcFilter{
 		state:        make(map[string]map[string]*srcEntry),
 		outFOMW:      outFOMW,
@@ -116,7 +119,12 @@ func (f *fanSrcFilter) computeDelta(batch protocol.Batch) srcDelta {
 			d.Entries[fromKey] = entry
 		}
 		entry.DistinctTo[tx.ToBank+"|"+tx.ToAccount] = true
-		entry.Transactions = append(entry.Transactions, tx)
+		entry.SrcRefs = append(entry.SrcRefs, protocol.SrcRef{
+			FromBank:    tx.FromBank,
+			FromAccount: tx.FromAccount,
+			ToBank:      tx.ToBank,
+			ToAccount:   tx.ToAccount,
+		})
 	}
 	return d
 }
@@ -140,7 +148,7 @@ func (f *fanSrcFilter) applyDelta(delta srcDelta) {
 		for k := range entry.DistinctTo {
 			existing.DistinctTo[k] = true
 		}
-		existing.Transactions = append(existing.Transactions, entry.Transactions...)
+		existing.SrcRefs = append(existing.SrcRefs, entry.SrcRefs...)
 	}
 }
 
@@ -193,8 +201,10 @@ func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
 		return true
 	}
 
-	foPart := make(map[int][]protocol.Transaction)
-	fiPart := make(map[int][]protocol.Transaction)
+	foPart := make(map[int][]protocol.SrcRef)
+	fiPart := make(map[int][]protocol.SrcRef)
+	foChunkCount := make(map[int]int)
+	fiChunkCount := make(map[int]int)
 
 	fromKeys := make([]string, 0, len(byFrom))
 	for k := range byFrom {
@@ -207,22 +217,45 @@ func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
 		if len(entry.DistinctTo) <= minDistinctDests {
 			continue
 		}
-		for _, tx := range entry.Transactions {
-			foP := worker.PartitionForKey(tx.FromBank+"|"+tx.FromAccount, f.foPartitions)
-			foPart[foP] = append(foPart[foP], tx)
-			fiP := worker.PartitionForKey(tx.ToBank+"|"+tx.ToAccount, f.fiPartitions)
-			fiPart[fiP] = append(fiPart[fiP], tx)
+		for _, ref := range entry.SrcRefs {
+			foP := worker.PartitionForKey(ref.FromBank+"|"+ref.FromAccount, f.foPartitions)
+			foPart[foP] = append(foPart[foP], ref)
+			if len(foPart[foP]) >= chunkSize {
+				if !f.sendPartitionedChunk(f.outFOMW, clientID, foPart[foP], foP, f.foKeyPrefix, foChunkCount[foP]) {
+					return false
+				}
+				foPart[foP] = nil
+				foChunkCount[foP]++
+			}
+
+			fiP := worker.PartitionForKey(ref.ToBank+"|"+ref.ToAccount, f.fiPartitions)
+			fiPart[fiP] = append(fiPart[fiP], ref)
+			if len(fiPart[fiP]) >= chunkSize {
+				if !f.sendPartitionedChunk(f.outFIMW, clientID, fiPart[fiP], fiP, f.fiKeyPrefix, fiChunkCount[fiP]) {
+					return false
+				}
+				fiPart[fiP] = nil
+				fiChunkCount[fiP]++
+			}
 		}
 	}
 
 	log.Printf("[fan_src_filter] flush client=%s total_sources=%d parent_batch=%s",
 		clientID, len(byFrom), parentBatchID)
 
-	if !sendPartitioned(f.outFOMW, clientID, foPart, f.foKeyPrefix) {
-		return false
+	for p, txns := range foPart {
+		if len(txns) > 0 {
+			if !f.sendPartitionedChunk(f.outFOMW, clientID, txns, p, f.foKeyPrefix, foChunkCount[p]) {
+				return false
+			}
+		}
 	}
-	if !sendPartitioned(f.outFIMW, clientID, fiPart, f.fiKeyPrefix) {
-		return false
+	for p, txns := range fiPart {
+		if len(txns) > 0 {
+			if !f.sendPartitionedChunk(f.outFIMW, clientID, txns, p, f.fiKeyPrefix, fiChunkCount[p]) {
+				return false
+			}
+		}
 	}
 
 	delete(f.state, clientID)
@@ -232,32 +265,23 @@ func (f *fanSrcFilter) flush(clientID string, parentBatchID string) bool {
 	return true
 }
 
-func sendPartitioned(mw middleware.Middleware, clientID string, partitioned map[int][]protocol.Transaction, keyPrefix string) bool {
-	parts := make([]int, 0, len(partitioned))
+func (f *fanSrcFilter) sendPartitionedChunk(mw middleware.Middleware, clientID string, refs []protocol.SrcRef, partition int, keyPrefix string, chunkCount int) bool {
+	key := worker.RoutingKey(keyPrefix, partition)
 	instance := config.MustEnvInt("INSTANCE_ID")
-	for p := range partitioned {
-		parts = append(parts, p)
+	out := protocol.Batch{
+		Type:    protocol.BatchTypeSrcRef,
+		ClientID: clientID,
+		SrcRefs: refs,
+		BatchID: id.Aggregator("fan_src_filter", clientID, partition, chunkCount, instance),
 	}
-	sort.Ints(parts)
-
-	for _, p := range parts {
-		txns := partitioned[p]
-		key := worker.RoutingKey(keyPrefix, p)
-		out := protocol.Batch{
-			Type:         protocol.BatchTypeTransactions,
-			ClientID:     clientID,
-			Transactions: txns,
-			BatchID:      id.Aggregator("fan_src_filter", clientID, p, 0, instance),
-		}
-		data, err := json.Marshal(out)
-		if err != nil {
-			log.Printf("[fan_src_filter] marshal batch key=%s: %v", key, err)
-			return false
-		}
-		if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
-			log.Printf("[fan_src_filter] send batch key=%s: %v", key, err)
-			return false
-		}
+	data, err := json.Marshal(out)
+	if err != nil {
+		log.Printf("[fan_src_filter] marshal batch key=%s: %v", key, err)
+		return false
+	}
+	if err := mw.SendWithKey(middleware.Message{Body: string(data)}, key); err != nil {
+		log.Printf("[fan_src_filter] send batch key=%s: %v", key, err)
+		return false
 	}
 	return true
 }

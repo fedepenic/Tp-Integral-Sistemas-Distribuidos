@@ -22,7 +22,7 @@ type joinQ3 struct {
 
 func newJoinQ3() *joinQ3 {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &joinQ3{
 		states:  make(map[string]joinQ3State),
 		deduper: dedup.New(),
@@ -60,7 +60,7 @@ func (j *joinQ3) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if !ok {
 		state = joinQ3State{
 			ThresholdsByFormat: make(map[string]float64),
-			PendingTxns:        make(map[string][]protocol.Transaction),
+			PendingTxns:        make(map[string][]pendingTxn),
 		}
 	}
 
@@ -77,10 +77,15 @@ func (j *joinQ3) process(batch protocol.Batch) (protocol.Batch, bool) {
 		for _, avg := range avgs {
 			threshold := avg.AvgAmount / 100.0
 			state.ThresholdsByFormat[avg.PaymentFormat] = threshold
-			for _, tx := range state.PendingTxns[avg.PaymentFormat] {
-				if tx.AmountPaid < threshold {
-					tx.AvgForFormat = avg.AvgAmount
-					results = append(results, tx)
+			for _, ptx := range state.PendingTxns[avg.PaymentFormat] {
+				if ptx.AmountPaid < threshold {
+					results = append(results, protocol.Transaction{
+						PaymentFormat: avg.PaymentFormat,
+						AmountPaid:    ptx.AmountPaid,
+						FromBank:      ptx.FromBank,
+						FromAccount:   ptx.FromAccount,
+						AvgForFormat:  avg.AvgAmount,
+					})
 				}
 			}
 			delete(state.PendingTxns, avg.PaymentFormat)
@@ -91,7 +96,12 @@ func (j *joinQ3) process(batch protocol.Batch) (protocol.Batch, bool) {
 		for _, tx := range batch.Transactions {
 			threshold, hasThreshold := state.ThresholdsByFormat[tx.PaymentFormat]
 			if !hasThreshold {
-				state.PendingTxns[tx.PaymentFormat] = append(state.PendingTxns[tx.PaymentFormat], tx)
+				state.PendingTxns[tx.PaymentFormat] = append(state.PendingTxns[tx.PaymentFormat], pendingTxn{
+					PaymentFormat: tx.PaymentFormat,
+					AmountPaid:    tx.AmountPaid,
+					FromBank:      tx.FromBank,
+					FromAccount:   tx.FromAccount,
+				})
 			} else if tx.AmountPaid < threshold {
 				tx.AvgForFormat = threshold * 100.0
 				results = append(results, tx)
@@ -107,7 +117,15 @@ func (j *joinQ3) process(batch protocol.Batch) (protocol.Batch, bool) {
 		delta.Avgs = avgs
 	}
 	if batch.Type == protocol.BatchTypeTransactions {
-		delta.Txns = batch.Transactions
+		delta.Txns = make([]pendingTxn, len(batch.Transactions))
+		for i, tx := range batch.Transactions {
+			delta.Txns[i] = pendingTxn{
+				PaymentFormat: tx.PaymentFormat,
+				AmountPaid:    tx.AmountPaid,
+				FromBank:      tx.FromBank,
+				FromAccount:   tx.FromAccount,
+			}
+		}
 	}
 
 	// Write WAL
@@ -179,7 +197,7 @@ func (j *joinQ3) recover() {
 			st.ThresholdsByFormat = make(map[string]float64)
 		}
 		if st.PendingTxns == nil {
-			st.PendingTxns = make(map[string][]protocol.Transaction)
+			st.PendingTxns = make(map[string][]pendingTxn)
 		}
 		states[cid] = st
 	}
@@ -204,7 +222,7 @@ func (j *joinQ3) applyDelta(delta joinQ3Delta) {
 	if !ok {
 		state = joinQ3State{
 			ThresholdsByFormat: make(map[string]float64),
-			PendingTxns:        make(map[string][]protocol.Transaction),
+			PendingTxns:        make(map[string][]pendingTxn),
 		}
 	}
 

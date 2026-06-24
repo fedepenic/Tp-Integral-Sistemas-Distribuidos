@@ -24,7 +24,7 @@ type scatterGather struct {
 
 func newScatterGather(outputMW middleware.Middleware) *scatterGather {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &scatterGather{
 		state:    make(map[string]map[string]*sgEntry),
 		outputMW: outputMW,

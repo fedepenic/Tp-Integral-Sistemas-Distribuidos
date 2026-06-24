@@ -25,7 +25,7 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 	txnCounts := make(map[string]int64)
 	deduper := dedup.New()
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	sm := node.NewStateManager("counter", "counter", stateDir, freq)
 
 	cp, entries, err := sm.Recover()

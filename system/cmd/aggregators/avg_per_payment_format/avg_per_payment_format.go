@@ -30,7 +30,7 @@ type avgPerPaymentFormat struct {
 
 func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &avgPerPaymentFormat{
 		state:            make(map[string]map[string]avgState),
 		outputMW:         outputMW,

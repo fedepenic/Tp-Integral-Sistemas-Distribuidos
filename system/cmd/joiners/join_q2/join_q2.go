@@ -22,7 +22,7 @@ type joinQ2 struct {
 
 func newJoinQ2(outputMW middleware.Middleware) *joinQ2 {
 	stateDir := config.EnvOrDefault("STATE_DIR", "")
-	freq := node.CheckpointFreqFromEnv(1000)
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &joinQ2{
 		states:   make(map[string]joinQ2State),
 		deduper:  dedup.New(),
