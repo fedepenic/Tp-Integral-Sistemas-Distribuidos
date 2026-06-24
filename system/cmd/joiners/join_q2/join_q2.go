@@ -60,7 +60,7 @@ func (j *joinQ2) process(batch protocol.Batch) (protocol.Batch, bool) {
 	state, ok := j.states[batch.ClientID]
 	if !ok {
 		state = joinQ2State{
-			AccountsByBank:   make(map[string]protocol.Account),
+			AccountsByBank:   make(map[string]protocol.AccountRef),
 			PendingMaxByBank: make(map[string][]maxPerBankResult),
 		}
 	}
@@ -71,7 +71,20 @@ func (j *joinQ2) process(batch protocol.Batch) (protocol.Batch, bool) {
 	// Build delta from batch data (before computing results, to capture input)
 	delta := joinQ2Delta{ClientID: batch.ClientID}
 	if isAccounts {
-		delta.Accounts = batch.Accounts
+		// Read accounts from Records (new AccountRef format) or fall back to batch.Accounts
+		if len(batch.Records) > 0 {
+			var refs []protocol.AccountRef
+			if err := json.Unmarshal(batch.Records, &refs); err != nil {
+				log.Printf("[join_q2] malformed account refs: %v", err)
+				j.states[batch.ClientID] = state
+				return protocol.Batch{}, false
+			}
+			delta.Accounts = refs
+		} else {
+			for _, a := range batch.Accounts {
+				delta.Accounts = append(delta.Accounts, protocol.AccountRef{BankName: a.BankName, BankID: a.BankID})
+			}
+		}
 	}
 	if batch.DataType == "max_per_bank" && len(batch.Records) > 0 {
 		var rawResults []maxPerBankResult
@@ -85,7 +98,7 @@ func (j *joinQ2) process(batch protocol.Batch) (protocol.Batch, bool) {
 
 	// Process accounts
 	if isAccounts {
-		for _, account := range batch.Accounts {
+		for _, account := range delta.Accounts {
 			state.AccountsByBank[account.BankID] = account
 			if pending, exists := state.PendingMaxByBank[account.BankID]; exists {
 				for _, res := range pending {
@@ -199,7 +212,7 @@ func (j *joinQ2) recover() {
 		}
 		for cid, st := range states {
 			if st.AccountsByBank == nil {
-				st.AccountsByBank = make(map[string]protocol.Account)
+				st.AccountsByBank = make(map[string]protocol.AccountRef)
 			}
 			if st.PendingMaxByBank == nil {
 				st.PendingMaxByBank = make(map[string][]maxPerBankResult)
@@ -229,7 +242,7 @@ func (j *joinQ2) applyDelta(delta joinQ2Delta) {
 	state, ok := j.states[delta.ClientID]
 	if !ok {
 		state = joinQ2State{
-			AccountsByBank:   make(map[string]protocol.Account),
+			AccountsByBank:   make(map[string]protocol.AccountRef),
 			PendingMaxByBank: make(map[string][]maxPerBankResult),
 		}
 	}

@@ -43,6 +43,12 @@ type Account struct {
 	EntityName    string `json:"entity_name"`
 }
 
+// AccountRef is a lightweight version with only the fields needed by join_q2.
+type AccountRef struct {
+	BankName string `json:"bank_name"`
+	BankID   string `json:"bank_id"`
+}
+
 type ScatterGatherItem struct {
 	FromBank      string `json:"from_bank"`
 	FromAccount   string `json:"from_account"`

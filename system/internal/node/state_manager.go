@@ -330,6 +330,7 @@ func (sm *StateManager) LoadWALAfter(afterSeq int64) ([]WALEntry, error) {
 
 	var entries []WALEntry
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
