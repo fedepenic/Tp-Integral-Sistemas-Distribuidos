@@ -16,7 +16,7 @@ import (
 
 const (
 	minDistinctDests = 5
-	chunkSize        = 1000
+	chunkSize        = 700
 )
 
 type fanSrcFilter struct {

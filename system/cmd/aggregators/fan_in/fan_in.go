@@ -14,7 +14,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
 
-const chunkSize = 1000
+const chunkSize = 700
 
 type fanIn struct {
 	state            map[string]map[string]*fanInEntry
