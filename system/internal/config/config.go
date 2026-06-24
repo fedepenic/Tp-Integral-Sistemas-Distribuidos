@@ -101,6 +101,18 @@ func ExchangeWithKey(nameKey string, routingKeyEnv string, conn middleware.ConnS
 	return Exchange(nameKey, []string{MustEnv(routingKeyEnv)}, conn)
 }
 
+// DurableExchangeWithKey es como ExchangeWithKey pero la cola es durable
+// (no-exclusiva, no-auto-delete). Los mensajes sobreviven crashes del consumer.
+func DurableExchangeWithKey(nameKey, routingKeyEnv string, conn middleware.ConnSettings) middleware.Middleware {
+	name := MustEnv(nameKey)
+	keys := []string{MustEnv(routingKeyEnv)}
+	mw, err := middleware.NewDurableExchangeMiddleware(name, keys, conn)
+	if err != nil {
+		log.Fatalf("[config] durable exchange %s (%s): %v", nameKey, name, err)
+	}
+	return mw
+}
+
 // ExchangeWithKeyList retorna un ExchangeMiddleware con múltiples routing keys
 // leídas de una env var con valores separados por coma.
 // Útil para exchanges donde el producer debe fanout a múltiples routing keys.
