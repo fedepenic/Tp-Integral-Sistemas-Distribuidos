@@ -11,7 +11,7 @@ func main() {
 	svc := node.NewExclusive("fan_src_filter")
 	conn := svc.Conn()
 
-	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
+	inputMW := config.DurableExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	outFOMW := config.ExchangePublisher("OUTPUT_FO_EXCHANGE", []string{}, conn)

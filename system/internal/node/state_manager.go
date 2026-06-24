@@ -376,6 +376,12 @@ func (sm *StateManager) Recover() (*CheckpointData, []WALEntry, error) {
 		return nil, nil, err
 	}
 
+	if len(entries) > 0 {
+		sm.walSeq = entries[len(entries)-1].Seq
+	} else if cp != nil {
+		sm.walSeq = cp.CheckpointSeq
+	}
+
 	return cp, entries, nil
 }
 

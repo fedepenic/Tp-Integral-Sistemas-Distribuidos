@@ -11,7 +11,7 @@ func main() {
 	svc := node.NewExclusive("scatter_gather")
 	conn := svc.Conn()
 
-	inputMW := config.ExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
+	inputMW := config.DurableExchangeWithKey("INPUT_EXCHANGE", "INPUT_KEY", conn)
 	defer inputMW.Close()
 
 	outputMW := config.Queue("OUTPUT_QUEUE", conn)
