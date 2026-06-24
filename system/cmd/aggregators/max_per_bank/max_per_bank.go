@@ -116,18 +116,22 @@ func (m *maxPerBank) recover() {
 		log.Printf("[max_per_bank] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[max_per_bank] no checkpoint — starting fresh")
 		return
 	}
 
-	var state map[string]map[string]maxPerBankState
-	if err := json.Unmarshal(cp.State, &state); err != nil {
-		log.Printf("[max_per_bank] unmarshal checkpoint state: %v", err)
-		return
+	if cp != nil {
+		var state map[string]map[string]maxPerBankState
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[max_per_bank] unmarshal checkpoint state: %v", err)
+			return
+		}
+		m.state = state
+		log.Printf("[max_per_bank] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[max_per_bank] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	m.state = state
-	log.Printf("[max_per_bank] recovered %d clients from checkpoint", len(state))
 
 	for _, entry := range entries {
 		var delta maxPerBankDelta

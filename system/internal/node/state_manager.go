@@ -219,7 +219,6 @@ func (sm *StateManager) rotateWAL() {
 		return
 	}
 	sm.walFile = f
-	sm.walSeq = 0
 	sm.dedup = make(map[string]struct{})
 }
 
@@ -366,11 +365,13 @@ func (sm *StateManager) Recover() (*CheckpointData, []WALEntry, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if cp == nil {
-		return nil, nil, nil
+
+	afterSeq := int64(0)
+	if cp != nil {
+		afterSeq = cp.CheckpointSeq
 	}
 
-	entries, err := sm.LoadWALAfter(cp.CheckpointSeq)
+	entries, err := sm.LoadWALAfter(afterSeq)
 	if err != nil {
 		return nil, nil, err
 	}

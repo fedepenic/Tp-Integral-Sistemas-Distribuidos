@@ -186,27 +186,31 @@ func (j *joinQ2) recover() {
 		log.Printf("[join_q2] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[join_q2] no checkpoint — starting fresh")
 		return
 	}
 
-	var states map[string]joinQ2State
-	if err := json.Unmarshal(cp.State, &states); err != nil {
-		log.Printf("[join_q2] unmarshal checkpoint: %v", err)
-		return
-	}
-	for cid, st := range states {
-		if st.AccountsByBank == nil {
-			st.AccountsByBank = make(map[string]protocol.Account)
+	if cp != nil {
+		var states map[string]joinQ2State
+		if err := json.Unmarshal(cp.State, &states); err != nil {
+			log.Printf("[join_q2] unmarshal checkpoint: %v", err)
+			return
 		}
-		if st.PendingMaxByBank == nil {
-			st.PendingMaxByBank = make(map[string][]maxPerBankResult)
+		for cid, st := range states {
+			if st.AccountsByBank == nil {
+				st.AccountsByBank = make(map[string]protocol.Account)
+			}
+			if st.PendingMaxByBank == nil {
+				st.PendingMaxByBank = make(map[string][]maxPerBankResult)
+			}
+			states[cid] = st
 		}
-		states[cid] = st
+		j.states = states
+		log.Printf("[join_q2] recovered %d clients from checkpoint", len(states))
+	} else {
+		log.Printf("[join_q2] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	j.states = states
-	log.Printf("[join_q2] recovered %d clients from checkpoint", len(states))
 
 	for _, entry := range entries {
 		var delta joinQ2Delta

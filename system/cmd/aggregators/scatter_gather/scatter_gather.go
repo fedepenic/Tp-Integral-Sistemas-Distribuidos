@@ -140,18 +140,22 @@ func (sg *scatterGather) recover() {
 		log.Printf("[scatter_gather] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[scatter_gather] no checkpoint — starting fresh")
 		return
 	}
 
-	var state map[string]map[string]*sgEntry
-	if err := json.Unmarshal(cp.State, &state); err != nil {
-		log.Printf("[scatter_gather] unmarshal checkpoint: %v", err)
-		return
+	if cp != nil {
+		var state map[string]map[string]*sgEntry
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[scatter_gather] unmarshal checkpoint: %v", err)
+			return
+		}
+		sg.state = state
+		log.Printf("[scatter_gather] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[scatter_gather] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	sg.state = state
-	log.Printf("[scatter_gather] recovered %d clients from checkpoint", len(state))
 
 	for _, entry := range entries {
 		var delta sgDelta

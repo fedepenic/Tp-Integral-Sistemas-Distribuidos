@@ -136,18 +136,22 @@ func (m *avgPerPaymentFormat) recover() {
 		log.Printf("[avg_per_payment_format] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[avg_per_payment_format] no checkpoint — starting fresh")
 		return
 	}
 
-	var state map[string]map[string]avgState
-	if err := json.Unmarshal(cp.State, &state); err != nil {
-		log.Printf("[avg_per_payment_format] unmarshal checkpoint: %v", err)
-		return
+	if cp != nil {
+		var state map[string]map[string]avgState
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[avg_per_payment_format] unmarshal checkpoint: %v", err)
+			return
+		}
+		m.state = state
+		log.Printf("[avg_per_payment_format] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[avg_per_payment_format] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	m.state = state
-	log.Printf("[avg_per_payment_format] recovered %d clients from checkpoint", len(state))
 
 	for _, entry := range entries {
 		var delta avgDelta

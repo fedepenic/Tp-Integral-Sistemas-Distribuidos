@@ -200,18 +200,22 @@ func (f *fanIn) recover() {
 		log.Printf("[fan_in] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[fan_in] no checkpoint — starting fresh")
 		return
 	}
 
-	var state map[string]map[string]*fanInEntry
-	if err := json.Unmarshal(cp.State, &state); err != nil {
-		log.Printf("[fan_in] unmarshal checkpoint: %v", err)
-		return
+	if cp != nil {
+		var state map[string]map[string]*fanInEntry
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[fan_in] unmarshal checkpoint: %v", err)
+			return
+		}
+		f.state = state
+		log.Printf("[fan_in] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[fan_in] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	f.state = state
-	log.Printf("[fan_in] recovered %d clients from checkpoint", len(state))
 
 	for _, entry := range entries {
 		var delta fanInDelta

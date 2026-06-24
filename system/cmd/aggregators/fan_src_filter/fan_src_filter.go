@@ -169,18 +169,22 @@ func (f *fanSrcFilter) recover() {
 		log.Printf("[fan_src_filter] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[fan_src_filter] no checkpoint — starting fresh")
 		return
 	}
 
-	var state map[string]map[string]*srcEntry
-	if err := json.Unmarshal(cp.State, &state); err != nil {
-		log.Printf("[fan_src_filter] unmarshal checkpoint: %v", err)
-		return
+	if cp != nil {
+		var state map[string]map[string]*srcEntry
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[fan_src_filter] unmarshal checkpoint: %v", err)
+			return
+		}
+		f.state = state
+		log.Printf("[fan_src_filter] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[fan_src_filter] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	f.state = state
-	log.Printf("[fan_src_filter] recovered %d clients from checkpoint", len(state))
 
 	for _, entry := range entries {
 		var delta srcDelta

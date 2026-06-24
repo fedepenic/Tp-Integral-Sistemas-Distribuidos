@@ -171,27 +171,31 @@ func (j *joinerSG) recover() {
 		log.Printf("[joiner_sg] recovery error: %v", err)
 		return
 	}
-	if cp == nil {
+	if cp == nil && len(entries) == 0 {
 		log.Printf("[joiner_sg] no checkpoint — starting fresh")
 		return
 	}
 
-	var states map[string]sgState
-	if err := json.Unmarshal(cp.State, &states); err != nil {
-		log.Printf("[joiner_sg] unmarshal checkpoint: %v", err)
-		return
-	}
-	for cid, st := range states {
-		if st.FanOutByMid == nil {
-			st.FanOutByMid = make(map[string][]fanOutResult)
+	if cp != nil {
+		var states map[string]sgState
+		if err := json.Unmarshal(cp.State, &states); err != nil {
+			log.Printf("[joiner_sg] unmarshal checkpoint: %v", err)
+			return
 		}
-		if st.FanInByMid == nil {
-			st.FanInByMid = make(map[string][]fanInResult)
+		for cid, st := range states {
+			if st.FanOutByMid == nil {
+				st.FanOutByMid = make(map[string][]fanOutResult)
+			}
+			if st.FanInByMid == nil {
+				st.FanInByMid = make(map[string][]fanInResult)
+			}
+			states[cid] = st
 		}
-		states[cid] = st
+		j.states = states
+		log.Printf("[joiner_sg] recovered %d clients from checkpoint", len(states))
+	} else {
+		log.Printf("[joiner_sg] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
-	j.states = states
-	log.Printf("[joiner_sg] recovered %d clients from checkpoint", len(states))
 
 	for _, entry := range entries {
 		var delta sgDelta
