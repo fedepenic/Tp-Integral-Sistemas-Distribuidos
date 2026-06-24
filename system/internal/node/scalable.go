@@ -13,7 +13,12 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 )
 
-const chunkSize = 10000
+// ChunkSize is the maximum number of transactions per output batch. It is
+// exported so recovery paths (e.g. joiner WAL replay re-emission) can split
+// re-emitted results with the exact same chunk boundaries — and therefore the
+// exact same per-chunk BatchIDs — that the live path produced, so downstream
+// dedup recognises them as duplicates.
+const ChunkSize = 10000
 
 // Scalable is a horizontally-scalable pipeline node. It embeds Node and
 // extends it with peer-coordination for EOF propagation:
@@ -364,7 +369,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			// If this client's EOF was already forwarded, this is a stale data
 			// EOF (redelivery) — no need to broadcast it.
 			if _, done := s.eofCompleted[batch.ClientID]; done {
-				log.Printf("[%s] stale data-path EOF for client=%s — already completed, discarding", s.name, batch.ClientID)
+				log.Printf("[%s] stale data-path EOF for client=%s — already completed, discarding %s", s.name, batch.ClientID, batchLogSummary(batch))
 				s.cond.Broadcast()
 				s.mu.Unlock()
 				ack()
@@ -389,7 +394,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		// pending adjustment (TOCTOU race).
 		s.mu.Lock()
 		if _, done := s.eofCompleted[batch.ClientID]; done {
-			log.Printf("[%s] data after EOF for client=%s — already completed, discarding", s.name, batch.ClientID)
+			logDataAfterEOF(s.name, "already completed", batch)
 			s.globalPending--
 			s.cond.Broadcast()
 			s.mu.Unlock()
@@ -402,7 +407,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 		// Re-check after wait: handleEOF may have completed and set
 		// eofCompleted while cond.Wait released the lock.
 		if _, done := s.eofCompleted[batch.ClientID]; done {
-			log.Printf("[%s] data after EOF for client=%s — completed during wait, discarding", s.name, batch.ClientID)
+			logDataAfterEOF(s.name, "completed during wait", batch)
 			s.globalPending--
 			s.cond.Broadcast()
 			s.mu.Unlock()
@@ -426,7 +431,7 @@ func (s *Scalable) handleData(outputMW, eofBroadcast middleware.Middleware, fn P
 			return
 		}
 
-		chunks := splitBatch(result, chunkSize)
+		chunks := SplitBatch(result, ChunkSize)
 		for _, chunk := range chunks {
 			data, err := json.Marshal(chunk)
 			if err != nil {
@@ -642,7 +647,12 @@ func (s *Scalable) handleEOF(outputMW middleware.Middleware, fn ProcessFunc) fun
 	}
 }
 
-func splitBatch(b protocol.Batch, size int) []protocol.Batch {
+// SplitBatch splits a batch's transactions into chunks of at most size
+// transactions each, assigning each chunk a deterministic BatchID derived from
+// the parent (`<batchID>_chunk_<n>`). Splitting is deterministic in both the
+// chunk boundaries and the IDs, so the same input reproduces the same chunks —
+// which is what lets recovery re-emission be deduplicated downstream.
+func SplitBatch(b protocol.Batch, size int) []protocol.Batch {
 	if len(b.Transactions) <= size {
 		return []protocol.Batch{b}
 	}

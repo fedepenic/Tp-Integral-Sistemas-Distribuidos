@@ -39,7 +39,7 @@ func main() {
 
 	svc := node.NewJoin("join_q3", avgUpstream, txnUpstream, classify)
 
-	j := newJoinQ3()
+	j := newJoinQ3(outputMW)
 	j.recover()
 
 	log.Printf("[join_q3] started avg_upstream=%d txn_upstream=%d", avgUpstream, txnUpstream)

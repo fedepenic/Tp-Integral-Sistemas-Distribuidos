@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -25,8 +26,8 @@ type WALEntry struct {
 // delta is fully reflected in State. On recovery, only WAL entries
 // with Seq > CheckpointSeq need to be replayed.
 type CheckpointData struct {
-	State         json.RawMessage  `json:"state"`
-	CheckpointSeq int64            `json:"checkpoint_seq"`
+	State         json.RawMessage `json:"state"`
+	CheckpointSeq int64           `json:"checkpoint_seq"`
 }
 
 // StateManager provides checkpoint-based persistence with a WAL for
@@ -39,18 +40,18 @@ type CheckpointData struct {
 //
 // Flow per batch
 //
-//	1. Process batch → compute delta (incremental state change)
-//	2. AppendWAL(batchID, delta) → fsync
-//	3. Apply delta to in-memory state
-//	4. Mark batchID as applied (dedup)
-//	5. Optionally checkpoint if freq threshold reached
+//  1. Process batch → compute delta (incremental state change)
+//  2. AppendWAL(batchID, delta) → fsync
+//  3. Apply delta to in-memory state
+//  4. Mark batchID as applied (dedup)
+//  5. Optionally checkpoint if freq threshold reached
 //
 // Recovery
 //
-//	1. Load latest checkpoint (full state + last checkpoint seq)
-//	2. Load WAL entries with Seq > checkpoint seq
-//	3. Replay each entry's delta into state
-//	4. Resume processing
+//  1. Load latest checkpoint (full state + last checkpoint seq)
+//  2. Load WAL entries with Seq > checkpoint seq
+//  3. Replay each entry's delta into state
+//  4. Resume processing
 //
 // Atomicity guarantees
 //
@@ -329,11 +330,16 @@ func (sm *StateManager) LoadWALAfter(afterSeq int64) ([]WALEntry, error) {
 	defer f.Close()
 
 	var entries []WALEntry
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	reader := bufio.NewReader(f)
+	for {
+		line, err := reader.ReadBytes('\n')
 		if len(line) == 0 {
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("read WAL: %w", err)
+			}
 			continue
 		}
 		var entry WALEntry
@@ -344,9 +350,12 @@ func (sm *StateManager) LoadWALAfter(afterSeq int64) ([]WALEntry, error) {
 		if entry.Seq > afterSeq {
 			entries = append(entries, entry)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read WAL: %w", err)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read WAL: %w", err)
+		}
 	}
 
 	if len(entries) > 0 {

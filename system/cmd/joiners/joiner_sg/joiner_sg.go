@@ -43,6 +43,12 @@ func newJoinerSG(outputMW middleware.Middleware, outputKeyPrefix string, outputP
 func (j *joinerSG) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
 		if j.deduper.Seen(batch.BatchID) {
+			// Already applied (delta in WAL). The items it produced are
+			// recomputed and re-emitted from the WAL during recovery, so
+			// suppressing this re-delivery is safe. Log it to expose the
+			// crash loss-window.
+			log.Printf("[joiner_sg] dedup re-delivery suppressed: client=%s batch_id=%s data_type=%s records_bytes=%d",
+				batch.ClientID, batch.BatchID, batch.DataType, len(batch.Records))
 			return protocol.Batch{}, false
 		}
 	}
@@ -197,36 +203,66 @@ func (j *joinerSG) recover() {
 		log.Printf("[joiner_sg] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
 
+	reemitted := 0
 	for _, entry := range entries {
 		var delta sgDelta
 		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
 			log.Printf("[joiner_sg] invalid WAL entry: %v", err)
 			continue
 		}
-		j.applyDelta(delta)
+		// applyDelta replays state AND recomputes the items this batch produced,
+		// mirroring the live cross-product exactly. The delta stores only the
+		// inputs (fan-in/fan-out refs), not the resolved items, to keep the WAL
+		// small — so we recompute rather than persist them.
+		items := j.applyDelta(delta)
 		j.sm.MarkApplied(entry.BatchID)
 		j.deduper.Mark(entry.BatchID)
+
+		// Re-emit downstream. The WAL entry is persisted (and the batch marked
+		// seen) before the items are sent on the live path, so a crash in that
+		// window loses them and the re-delivery is later suppressed by dedup.
+		// sendChunks derives per-chunk BatchIDs deterministically from
+		// entry.BatchID, so any items already sent are deduped downstream.
+		if len(items) > 0 {
+			log.Printf("[joiner_sg] recovery re-emit: client=%s batch_id=%s items=%d", delta.ClientID, entry.BatchID, len(items))
+			sendChunks(j.outputMW, delta.ClientID, items, j.outputKeyPrefix, j.outputPartitions, entry.BatchID)
+			reemitted += len(items)
+		}
 	}
-	log.Printf("[joiner_sg] recovery done: %d WAL entries replayed", len(entries))
+	log.Printf("[joiner_sg] recovery done: %d WAL entries replayed, %d items re-emitted downstream", len(entries), reemitted)
 }
 
-func (j *joinerSG) applyDelta(delta sgDelta) {
+// applyDelta replays a WAL delta into state and returns the scatter-gather
+// items the original batch produced. It reproduces the live process matching
+// exactly: each new fan-out/fan-in ref is appended to state and then paired
+// with the refs of the opposite side that already existed — so replaying the
+// WAL in order yields the same item set the live path emitted.
+func (j *joinerSG) applyDelta(delta sgDelta) []protocol.ScatterGatherItem {
 	state, ok := j.states[delta.ClientID]
 	if !ok {
 		state = newSGState()
 	}
 
+	var items []protocol.ScatterGatherItem
+
 	for _, fo := range delta.FanOut {
 		key := middleKey(fo.MiddleBank, fo.MiddleAccount)
 		state.FanOutByMid[key] = append(state.FanOutByMid[key], fo)
+		for _, fi := range state.FanInByMid[key] {
+			items = append(items, makeScatterGatherItem(fo, fi))
+		}
 	}
 
 	for _, fi := range delta.FanIn {
 		key := middleKey(fi.MiddleBank, fi.MiddleAccount)
 		state.FanInByMid[key] = append(state.FanInByMid[key], fi)
+		for _, fo := range state.FanOutByMid[key] {
+			items = append(items, makeScatterGatherItem(fo, fi))
+		}
 	}
 
 	j.states[delta.ClientID] = state
+	return items
 }
 
 func sendChunks(outputMW middleware.Middleware, clientID string, items []protocol.ScatterGatherItem, keyPrefix string, partitions int, parentBatchID string) {

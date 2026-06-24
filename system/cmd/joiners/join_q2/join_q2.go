@@ -34,6 +34,11 @@ func newJoinQ2(outputMW middleware.Middleware) *joinQ2 {
 func (j *joinQ2) process(batch protocol.Batch) (protocol.Batch, bool) {
 	if batch.BatchID != "" && batch.Type != protocol.BatchTypeEOF {
 		if j.deduper.Seen(batch.BatchID) {
+			// Already applied (delta in WAL). Its output is re-emitted from the
+			// WAL during recovery, so suppressing this re-delivery is safe. Log
+			// it to make the crash loss-window visible.
+			log.Printf("[join_q2] dedup re-delivery suppressed: client=%s batch_id=%s data_type=%s records_bytes=%d",
+				batch.ClientID, batch.BatchID, batch.DataType, len(batch.Records))
 			return protocol.Batch{}, false
 		}
 	}
@@ -225,6 +230,7 @@ func (j *joinQ2) recover() {
 		log.Printf("[join_q2] no checkpoint, replaying %d WAL entries from scratch", len(entries))
 	}
 
+	reemitted := 0
 	for _, entry := range entries {
 		var delta joinQ2Delta
 		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
@@ -234,8 +240,51 @@ func (j *joinQ2) recover() {
 		j.applyDelta(delta)
 		j.sm.MarkApplied(entry.BatchID)
 		j.deduper.Mark(entry.BatchID)
+
+		// Re-emit the results this batch produced. The WAL entry is persisted
+		// (and the batch marked seen) BEFORE the output is sent and acked on the
+		// live path, so a crash in that window loses the output and the
+		// re-delivery is later suppressed by dedup. Re-emitting here closes that
+		// gap; the output BatchID equals entry.BatchID, so anything already sent
+		// is recognised as a duplicate by downstream (sink) dedup.
+		if n := j.emitResolved(entry.BatchID, delta); n > 0 {
+			reemitted += n
+		}
 	}
-	log.Printf("[join_q2] recovery done: %d WAL entries replayed", len(entries))
+	log.Printf("[join_q2] recovery done: %d WAL entries replayed, %d resolved results re-emitted downstream", len(entries), reemitted)
+}
+
+// emitResolved re-sends the resolved max_per_bank results of a recovered WAL
+// entry downstream, using entry.BatchID as the output BatchID exactly as the
+// live path does, so downstream dedup recognises already-sent results as
+// duplicates. Returns the number of results re-emitted.
+func (j *joinQ2) emitResolved(batchID string, delta joinQ2Delta) int {
+	if j.outputMW == nil || len(delta.Resolved) == 0 {
+		return 0
+	}
+	records, err := json.Marshal(delta.Resolved)
+	if err != nil {
+		log.Printf("[join_q2] recovery re-emit marshal client=%s batch_id=%s: %v", delta.ClientID, batchID, err)
+		return 0
+	}
+	out := protocol.Batch{
+		Type:     protocol.BatchTypeData,
+		ClientID: delta.ClientID,
+		DataType: "max_per_bank",
+		BatchID:  batchID,
+		Records:  json.RawMessage(records),
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		log.Printf("[join_q2] recovery re-emit marshal batch client=%s batch_id=%s: %v", delta.ClientID, batchID, err)
+		return 0
+	}
+	if err := j.outputMW.Send(middleware.Message{Body: string(data)}); err != nil {
+		log.Printf("[join_q2] recovery re-emit send client=%s batch_id=%s: %v", delta.ClientID, batchID, err)
+		return 0
+	}
+	log.Printf("[join_q2] recovery re-emit: client=%s batch_id=%s results=%d", delta.ClientID, batchID, len(delta.Resolved))
+	return len(delta.Resolved)
 }
 
 func (j *joinQ2) applyDelta(delta joinQ2Delta) {
@@ -268,12 +317,7 @@ func (j *joinQ2) applyDelta(delta joinQ2Delta) {
 
 	j.states[delta.ClientID] = state
 
-	// Re-send resolved results downstream (duplicates are handled by downstream dedup)
-	for range delta.Resolved {
-		// Results are NOT re-sent during recovery because the checkpoint
-		// state already reflects the unresolved pending entries.
-		// The output was already sent before the crash; attempting to
-		// re-send would create duplicates that downstream dedup may not
-		// catch (the output batch ID differs from the input batch ID).
-	}
+	// NOTE: resolved results are NOT re-sent here. applyDelta only rebuilds
+	// in-memory join state. Re-emission of delta.Resolved happens in recover()
+	// via emitResolved, which is the path that closes the crash loss-window.
 }
