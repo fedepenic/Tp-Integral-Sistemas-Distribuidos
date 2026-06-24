@@ -14,6 +14,7 @@ const (
 	BatchTypeTransactions  BatchType = "transactions"
 	BatchTypeAccounts      BatchType = "accounts"
 	BatchTypeScatterGather BatchType = "scatter_gather"
+	BatchTypeSrcRef        BatchType = "src_ref"
 	BatchTypeEOF           BatchType = "eof"
 	BatchTypeACK           BatchType = "ack"
 	BatchTypeCount         BatchType = "count"
@@ -42,6 +43,12 @@ type Account struct {
 	EntityName    string `json:"entity_name"`
 }
 
+// AccountRef is a lightweight version with only the fields needed by join_q2.
+type AccountRef struct {
+	BankName string `json:"bank_name"`
+	BankID   string `json:"bank_id"`
+}
+
 type ScatterGatherItem struct {
 	FromBank      string `json:"from_bank"`
 	FromAccount   string `json:"from_account"`
@@ -49,6 +56,13 @@ type ScatterGatherItem struct {
 	MiddleAccount string `json:"middle_account"`
 	ToBank        string `json:"to_bank"`
 	ToAccount     string `json:"to_account"`
+}
+
+type SrcRef struct {
+	FromBank    string `json:"from_bank"`
+	FromAccount string `json:"from_account"`
+	ToBank      string `json:"to_bank"`
+	ToAccount   string `json:"to_account"`
 }
 
 type Batch struct {
@@ -60,6 +74,7 @@ type Batch struct {
 	Transactions       []Transaction       `json:"transactions,omitempty"`
 	Accounts           []Account           `json:"accounts,omitempty"`
 	ScatterGatherItems []ScatterGatherItem `json:"scatter_gather_items,omitempty"`
+	SrcRefs            []SrcRef            `json:"src_refs,omitempty"`
 	Records            json.RawMessage     `json:"records,omitempty"`
 	Count              int64               `json:"count,omitempty"`
 }

@@ -16,17 +16,20 @@ import (
 const chunkSize = 10_000
 
 type scatterGather struct {
-	// clientID → sgKey → entry
 	state    map[string]map[string]*sgEntry
 	outputMW middleware.Middleware
 	dedup    *dedup.BatchDeduplicator
+	sm       *node.StateManager
 }
 
 func newScatterGather(outputMW middleware.Middleware) *scatterGather {
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &scatterGather{
 		state:    make(map[string]map[string]*sgEntry),
 		outputMW: outputMW,
 		dedup:    dedup.New(),
+		sm:       node.NewStateManager("scatter_gather", "scatter_gather", stateDir, freq),
 	}
 }
 
@@ -47,27 +50,124 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 	}
 	log.Printf("[scatter_gather] batch client=%s items=%d", batch.ClientID, len(batch.ScatterGatherItems))
 
-	byKey, ok := sg.state[batch.ClientID]
-	if !ok {
-		byKey = make(map[string]*sgEntry)
-		sg.state[batch.ClientID] = byKey
+	// 1. Compute delta
+	delta := sg.computeDelta(batch)
+
+	// 2. Write delta to WAL
+	if sg.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[scatter_gather] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := sg.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[scatter_gather] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	// 3. Apply delta
+	sg.applyDelta(delta)
+
+	// 4. Mark & checkpoint
+	if batch.BatchID != "" {
+		sg.dedup.Mark(batch.BatchID)
+		sg.sm.MarkApplied(batch.BatchID)
+	}
+
+	if sg.sm.ShouldCheckpoint() {
+		sg.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (sg *scatterGather) computeDelta(batch protocol.Batch) sgDelta {
+	d := sgDelta{
+		ClientID: batch.ClientID,
+		Entries:  make(map[string]*sgEntry),
 	}
 	for _, item := range batch.ScatterGatherItems {
 		sgKey := item.FromBank + "|" + item.FromAccount + "|" + item.ToBank + "|" + item.ToAccount
-		entry, ok := byKey[sgKey]
-		if !ok {
-			entry = &sgEntry{
-				fromBank:    item.FromBank,
-				fromAccount: item.FromAccount,
-				toBank:      item.ToBank,
-				toAccount:   item.ToAccount,
+		if _, ok := d.Entries[sgKey]; !ok {
+			d.Entries[sgKey] = &sgEntry{
+				FromBank:    item.FromBank,
+				FromAccount: item.FromAccount,
+				ToBank:      item.ToBank,
+				ToAccount:   item.ToAccount,
 			}
-			byKey[sgKey] = entry
 		}
-		entry.count++
+		d.Entries[sgKey].Count++
 	}
-	sg.dedup.Mark(batch.BatchID)
-	return protocol.Batch{}, false
+	return d
+}
+
+func (sg *scatterGather) applyDelta(delta sgDelta) {
+	byKey, ok := sg.state[delta.ClientID]
+	if !ok {
+		byKey = make(map[string]*sgEntry)
+		sg.state[delta.ClientID] = byKey
+	}
+	for key, entry := range delta.Entries {
+		existing, ok := byKey[key]
+		if !ok {
+			existing = &sgEntry{
+				FromBank:    entry.FromBank,
+				FromAccount: entry.FromAccount,
+				ToBank:      entry.ToBank,
+				ToAccount:   entry.ToAccount,
+			}
+			byKey[key] = existing
+		}
+		existing.Count += entry.Count
+	}
+}
+
+func (sg *scatterGather) checkpoint() {
+	data, err := json.Marshal(sg.state)
+	if err != nil {
+		log.Printf("[scatter_gather] marshal state: %v", err)
+		return
+	}
+	if err := sg.sm.SaveCheckpoint(data); err != nil {
+		log.Printf("[scatter_gather] save checkpoint: %v", err)
+	}
+}
+
+func (sg *scatterGather) recover() {
+	cp, entries, err := sg.sm.Recover()
+	if err != nil {
+		log.Printf("[scatter_gather] recovery error: %v", err)
+		return
+	}
+	if cp == nil && len(entries) == 0 {
+		log.Printf("[scatter_gather] no checkpoint — starting fresh")
+		return
+	}
+
+	if cp != nil {
+		var state map[string]map[string]*sgEntry
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[scatter_gather] unmarshal checkpoint: %v", err)
+			return
+		}
+		sg.state = state
+		log.Printf("[scatter_gather] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[scatter_gather] no checkpoint, replaying %d WAL entries from scratch", len(entries))
+	}
+
+	for _, entry := range entries {
+		var delta sgDelta
+		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
+			log.Printf("[scatter_gather] invalid WAL entry: %v", err)
+			continue
+		}
+		sg.applyDelta(delta)
+		sg.sm.MarkApplied(entry.BatchID)
+		sg.dedup.Mark(entry.BatchID)
+	}
+	log.Printf("[scatter_gather] recovery done: %d WAL entries replayed", len(entries))
 }
 
 func (sg *scatterGather) flush(clientID string) bool {
@@ -89,24 +189,23 @@ func (sg *scatterGather) flush(clientID string) bool {
 	for _, key := range keys {
 		entry := byKey[key]
 
-		count := entry.count
+		count := entry.Count
 		if count <= scatterThreshold {
 			continue
 		}
 
-		// Skip self-loops (source == destination)
-		if entry.fromBank == entry.toBank &&
-			entry.fromAccount == entry.toAccount {
+		if entry.FromBank == entry.ToBank &&
+			entry.FromAccount == entry.ToAccount {
 			continue
 		}
 
 		passed++
 
 		chunk = append(chunk, scatterGatherResult{
-			FromBank:    entry.fromBank,
-			FromAccount: entry.fromAccount,
-			ToBank:      entry.toBank,
-			ToAccount:   entry.toAccount,
+			FromBank:    entry.FromBank,
+			FromAccount: entry.FromAccount,
+			ToBank:      entry.ToBank,
+			ToAccount:   entry.ToAccount,
 			TargetCount: count,
 		})
 
@@ -208,7 +307,6 @@ func mustMarshal(v any) json.RawMessage {
 	return data
 }
 
-// ProcessFunc wrapper so node.ProcessFunc signature is satisfied.
 func newProcess(sg *scatterGather) node.ProcessFunc {
 	return sg.process
 }

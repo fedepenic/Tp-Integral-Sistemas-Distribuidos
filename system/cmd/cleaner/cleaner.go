@@ -51,18 +51,23 @@ func newProcess(accountsMW middleware.Middleware, keyPrefix string, partitions i
 }
 
 func sendAccountBatches(mw middleware.Middleware, clientID string, accounts []protocol.Account, keyPrefix string, partitions int, paternID string) {
-	partitioned := make(map[int][]protocol.Account, partitions)
+	partitioned := make(map[int][]protocol.AccountRef, partitions)
 	for _, a := range accounts {
 		p := worker.PartitionForKey(a.BankID, partitions)
-		partitioned[p] = append(partitioned[p], a)
+		partitioned[p] = append(partitioned[p], protocol.AccountRef{BankName: a.BankName, BankID: a.BankID})
 	}
 	for p, batch := range partitioned {
 		key := worker.RoutingKey(keyPrefix, p)
+		records, err := json.Marshal(batch)
+		if err != nil {
+			log.Printf("[cleaner] marshal account refs partition=%d: %v", p, err)
+			continue
+		}
 		out := protocol.Batch{
 			Type:     protocol.BatchTypeAccounts,
 			ClientID: clientID,
 			DataType: "accounts",
-			Accounts: batch,
+			Records:  records,
 			BatchID:  id.Child(paternID, p),
 		}
 		data, err := json.Marshal(out)

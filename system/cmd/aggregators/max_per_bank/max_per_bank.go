@@ -8,6 +8,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/config"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
@@ -15,19 +16,22 @@ import (
 const chunkSize = 1000
 
 type maxPerBank struct {
-	// clientID -> bankID -> state
 	state            map[string]map[string]maxPerBankState
 	outputMW         middleware.Middleware
 	outputKeyPrefix  string
 	outputPartitions int
+	sm               *node.StateManager
 }
 
 func newMaxPerBank(outputMW middleware.Middleware) *maxPerBank {
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &maxPerBank{
 		state:            make(map[string]map[string]maxPerBankState),
 		outputMW:         outputMW,
 		outputKeyPrefix:  config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinq2"),
 		outputPartitions: config.MustEnvInt("OUTPUT_PARTITIONS"),
+		sm:               node.NewStateManager("max_per_bank", "max_per_bank", stateDir, freq),
 	}
 }
 
@@ -38,15 +42,107 @@ func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 		}
 		return protocol.Batch{}, false
 	}
-	banks, ok := m.state[batch.ClientID]
-	if !ok {
-		banks = make(map[string]maxPerBankState)
-		m.state[batch.ClientID] = banks
+
+	delta := m.computeDelta(batch)
+
+	if m.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[max_per_bank] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := m.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[max_per_bank] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	m.applyDelta(delta)
+
+	if batch.BatchID != "" {
+		m.sm.MarkApplied(batch.BatchID)
+	}
+
+	if m.sm.ShouldCheckpoint() {
+		m.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (m *maxPerBank) computeDelta(batch protocol.Batch) maxPerBankDelta {
+	d := maxPerBankDelta{
+		ClientID: batch.ClientID,
+		Banks:    make(map[string]maxPerBankState),
 	}
 	for _, t := range batch.Transactions {
-		banks[t.FromBank] = accumulate(banks[t.FromBank], t)
+		cur, exists := d.Banks[t.FromBank]
+		if !exists {
+			cur = m.state[batch.ClientID][t.FromBank]
+		}
+		d.Banks[t.FromBank] = accumulate(cur, t)
 	}
-	return protocol.Batch{}, false
+	return d
+}
+
+func (m *maxPerBank) applyDelta(delta maxPerBankDelta) {
+	banks, ok := m.state[delta.ClientID]
+	if !ok {
+		banks = make(map[string]maxPerBankState)
+		m.state[delta.ClientID] = banks
+	}
+	for bankID, newState := range delta.Banks {
+		cur := banks[bankID]
+		if !cur.HasValue || newState.MaxAmountUSD > cur.MaxAmountUSD {
+			banks[bankID] = newState
+		}
+	}
+}
+
+func (m *maxPerBank) checkpoint() {
+	data, err := json.Marshal(m.state)
+	if err != nil {
+		log.Printf("[max_per_bank] marshal state for checkpoint: %v", err)
+		return
+	}
+	if err := m.sm.SaveCheckpoint(data); err != nil {
+		log.Printf("[max_per_bank] save checkpoint: %v", err)
+	}
+}
+
+func (m *maxPerBank) recover() {
+	cp, entries, err := m.sm.Recover()
+	if err != nil {
+		log.Printf("[max_per_bank] recovery error: %v", err)
+		return
+	}
+	if cp == nil && len(entries) == 0 {
+		log.Printf("[max_per_bank] no checkpoint — starting fresh")
+		return
+	}
+
+	if cp != nil {
+		var state map[string]map[string]maxPerBankState
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[max_per_bank] unmarshal checkpoint state: %v", err)
+			return
+		}
+		m.state = state
+		log.Printf("[max_per_bank] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[max_per_bank] no checkpoint, replaying %d WAL entries from scratch", len(entries))
+	}
+
+	for _, entry := range entries {
+		var delta maxPerBankDelta
+		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
+			log.Printf("[max_per_bank] invalid WAL entry: %v", err)
+			continue
+		}
+		m.applyDelta(delta)
+		m.sm.MarkApplied(entry.BatchID)
+	}
+	log.Printf("[max_per_bank] recovery done: %d WAL entries replayed", len(entries))
 }
 
 func (m *maxPerBank) flush(clientID string) bool {
@@ -168,27 +264,26 @@ func (m *maxPerBank) sendEOF(clientID string) {
 }
 
 func accumulate(state maxPerBankState, tx protocol.Transaction) maxPerBankState {
-	if !state.hasValue || tx.AmountPaid > state.maxAmountUSD {
+	if !state.HasValue || tx.AmountPaid > state.MaxAmountUSD {
 		return maxPerBankState{
-			bankID:        tx.FromBank,
-			bankName:      tx.FromBank,
-			sourceAccount: tx.FromAccount,
-			maxAmountUSD:  tx.AmountPaid,
-			hasValue:      true,
+			BankID:        tx.FromBank,
+			BankName:      tx.FromBank,
+			SourceAccount: tx.FromAccount,
+			MaxAmountUSD:  tx.AmountPaid,
+			HasValue:      true,
 		}
 	}
-
 	return state
 }
 
 func finalize(state maxPerBankState) (maxPerBankResult, bool) {
-	if !state.hasValue {
+	if !state.HasValue {
 		return maxPerBankResult{}, false
 	}
 	return maxPerBankResult{
-		BankID:        state.bankID,
-		BankName:      state.bankName,
-		SourceAccount: state.sourceAccount,
-		MaxAmountUSD:  state.maxAmountUSD,
+		BankID:        state.BankID,
+		BankName:      state.BankName,
+		SourceAccount: state.SourceAccount,
+		MaxAmountUSD:  state.MaxAmountUSD,
 	}, true
 }

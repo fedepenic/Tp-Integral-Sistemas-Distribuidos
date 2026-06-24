@@ -1,14 +1,14 @@
 package main
 
 type accountRef struct {
-	bank    string
-	account string
+	Bank    string `json:"bank"`
+	Account string `json:"account"`
 }
 
 type fanInEntry struct {
-	toBank string
-	toAcct string
-	refs   []accountRef
+	ToBank string       `json:"to_bank"`
+	ToAcct string       `json:"to_acct"`
+	Refs   []accountRef `json:"refs"`
 }
 
 type fanInResult struct {
@@ -16,4 +16,9 @@ type fanInResult struct {
 	MiddleAccount string `json:"middle_account"`
 	ToBank        string `json:"to_bank"`
 	ToAccount     string `json:"to_account"`
+}
+
+type fanInDelta struct {
+	ClientID string               `json:"client_id"`
+	Entries  map[string]fanInEntry `json:"entries"`
 }

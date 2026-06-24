@@ -3,11 +3,11 @@ package main
 const scatterThreshold = 5
 
 type sgEntry struct {
-	fromBank    string
-	fromAccount string
-	toBank      string
-	toAccount   string
-	count       int
+	FromBank    string `json:"from_bank"`
+	FromAccount string `json:"from_account"`
+	ToBank      string `json:"to_bank"`
+	ToAccount   string `json:"to_account"`
+	Count       int    `json:"count"`
 }
 
 type scatterGatherResult struct {
@@ -16,4 +16,9 @@ type scatterGatherResult struct {
 	ToBank      string `json:"to_bank"`
 	ToAccount   string `json:"to_account"`
 	TargetCount int    `json:"target_count"`
+}
+
+type sgDelta struct {
+	ClientID string              `json:"client_id"`
+	Entries  map[string]*sgEntry `json:"entries"`
 }

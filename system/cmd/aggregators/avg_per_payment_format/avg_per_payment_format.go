@@ -10,6 +10,7 @@ import (
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/dedup"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/id"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/middleware"
+	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/node"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/protocol"
 	"github.com/fedepenic/Tp-Integral-Sistemas-Distribuidos/system/internal/worker"
 )
@@ -19,21 +20,24 @@ const maxRetries = 5
 const chunkSize = 1000
 
 type avgPerPaymentFormat struct {
-	// clientID -> paymentFormat -> accumulated state
 	state            map[string]map[string]avgState
 	outputMW         middleware.Middleware
 	outputKeyPrefix  string
 	outputPartitions int
 	dedup            *dedup.BatchDeduplicator
+	sm               *node.StateManager
 }
 
 func newAvgPerPaymentFormat(outputMW middleware.Middleware) *avgPerPaymentFormat {
+	stateDir := config.EnvOrDefault("STATE_DIR", "")
+	freq := node.CheckpointFreqFromEnv(10000)
 	return &avgPerPaymentFormat{
 		state:            make(map[string]map[string]avgState),
 		outputMW:         outputMW,
 		outputKeyPrefix:  config.EnvOrDefault("OUTPUT_KEY_PREFIX", "joinerformat"),
 		outputPartitions: config.MustEnvInt("OUTPUT_PARTITIONS"),
 		dedup:            dedup.New(),
+		sm:               node.NewStateManager("avg_per_payment_format", "avg_per_payment_format", stateDir, freq),
 	}
 }
 
@@ -44,6 +48,7 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 			return protocol.Batch{}, false
 		}
 	}
+
 	if batch.Type == protocol.BatchTypeEOF {
 		if m.flush(batch.ClientID) {
 			return batch, true
@@ -53,19 +58,112 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 	if batch.Type != protocol.BatchTypeTransactions {
 		return protocol.Batch{}, false
 	}
-	formats, ok := m.state[batch.ClientID]
-	if !ok {
-		formats = make(map[string]avgState)
-		m.state[batch.ClientID] = formats
+
+	// 1. Compute delta from batch
+	delta := m.computeDelta(batch)
+
+	// 2. Write delta to WAL (before state mutation)
+	if m.sm.Enabled() && batch.BatchID != "" {
+		deltaData, err := json.Marshal(delta)
+		if err != nil {
+			log.Printf("[avg_per_payment_format] marshal delta: %v", err)
+			return protocol.Batch{}, false
+		}
+		if err := m.sm.AppendWAL(batch.BatchID, deltaData); err != nil {
+			log.Printf("[avg_per_payment_format] WAL append: %v", err)
+			return protocol.Batch{}, false
+		}
+	}
+
+	// 3. Apply delta to global state
+	m.applyDelta(delta)
+
+	// 4. Mark dedup and checkpoint
+	if batch.BatchID != "" {
+		m.dedup.Mark(batch.BatchID)
+		m.sm.MarkApplied(batch.BatchID)
+	}
+
+	if m.sm.ShouldCheckpoint() {
+		m.checkpoint()
+	}
+
+	return protocol.Batch{}, false
+}
+
+func (m *avgPerPaymentFormat) computeDelta(batch protocol.Batch) avgDelta {
+	d := avgDelta{
+		ClientID: batch.ClientID,
+		Formats:  make(map[string]avgState),
 	}
 	for _, tx := range batch.Transactions {
-		s := formats[tx.PaymentFormat]
-		s.sum += tx.AmountPaid
-		s.count++
-		formats[tx.PaymentFormat] = s
+		s := d.Formats[tx.PaymentFormat]
+		s.Sum += tx.AmountPaid
+		s.Count++
+		d.Formats[tx.PaymentFormat] = s
 	}
-	m.dedup.Mark(batch.BatchID)
-	return protocol.Batch{}, false
+	return d
+}
+
+func (m *avgPerPaymentFormat) applyDelta(delta avgDelta) {
+	formats, ok := m.state[delta.ClientID]
+	if !ok {
+		formats = make(map[string]avgState)
+		m.state[delta.ClientID] = formats
+	}
+	for format, d := range delta.Formats {
+		s := formats[format]
+		s.Sum += d.Sum
+		s.Count += d.Count
+		formats[format] = s
+	}
+}
+
+func (m *avgPerPaymentFormat) checkpoint() {
+	data, err := json.Marshal(m.state)
+	if err != nil {
+		log.Printf("[avg_per_payment_format] marshal state: %v", err)
+		return
+	}
+	if err := m.sm.SaveCheckpoint(data); err != nil {
+		log.Printf("[avg_per_payment_format] save checkpoint: %v", err)
+	}
+}
+
+func (m *avgPerPaymentFormat) recover() {
+	cp, entries, err := m.sm.Recover()
+	if err != nil {
+		log.Printf("[avg_per_payment_format] recovery error: %v", err)
+		return
+	}
+	if cp == nil && len(entries) == 0 {
+		log.Printf("[avg_per_payment_format] no checkpoint — starting fresh")
+		return
+	}
+
+	if cp != nil {
+		var state map[string]map[string]avgState
+		if err := json.Unmarshal(cp.State, &state); err != nil {
+			log.Printf("[avg_per_payment_format] unmarshal checkpoint: %v", err)
+			return
+		}
+		m.state = state
+		log.Printf("[avg_per_payment_format] recovered %d clients from checkpoint", len(state))
+	} else {
+		log.Printf("[avg_per_payment_format] no checkpoint, replaying %d WAL entries from scratch", len(entries))
+	}
+
+	for _, entry := range entries {
+		var delta avgDelta
+		if err := json.Unmarshal(entry.Delta, &delta); err != nil {
+			log.Printf("[avg_per_payment_format] invalid WAL entry: %v", err)
+			continue
+		}
+		m.applyDelta(delta)
+		m.sm.MarkApplied(entry.BatchID)
+		m.dedup.Mark(entry.BatchID)
+	}
+	log.Printf("[avg_per_payment_format] recovery done: %d WAL entries replayed", len(entries))
 }
 
 func (m *avgPerPaymentFormat) flush(clientID string) bool {
@@ -85,13 +183,13 @@ func (m *avgPerPaymentFormat) flush(clientID string) bool {
 	partitioned := make(map[int][]avgPerFormatResult)
 	for _, format := range keys {
 		s := formats[format]
-		if s.count == 0 {
+		if s.Count == 0 {
 			continue
 		}
 		p := worker.PartitionForKey(format, m.outputPartitions)
 		partitioned[p] = append(partitioned[p], avgPerFormatResult{
 			PaymentFormat: format,
-			AvgAmount:     s.sum / float64(s.count),
+			AvgAmount:     s.Sum / float64(s.Count),
 		})
 
 		if len(partitioned[p]) >= chunkSize {
@@ -184,7 +282,7 @@ func (m *avgPerPaymentFormat) sendEOF(clientID string) {
 
 	eofData, err := json.Marshal(eofBatch)
 	if err != nil {
-		log.Printf("[avg_per_payment_			format] marshal EOF: %v", err)
+		log.Printf("[avg_per_payment_format] marshal EOF: %v", err)
 		return
 	}
 

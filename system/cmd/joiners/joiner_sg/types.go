@@ -17,14 +17,14 @@ type fanInResult struct {
 }
 
 type sgState struct {
-	fanOutByMid map[string][]fanOutResult // middleKey → results
-	fanInByMid  map[string][]fanInResult
+	FanOutByMid map[string][]fanOutResult `json:"fan_out_by_mid"`
+	FanInByMid  map[string][]fanInResult  `json:"fan_in_by_mid"`
 }
 
 func newSGState() sgState {
 	return sgState{
-		fanOutByMid: make(map[string][]fanOutResult),
-		fanInByMid:  make(map[string][]fanInResult),
+		FanOutByMid: make(map[string][]fanOutResult),
+		FanInByMid:  make(map[string][]fanInResult),
 	}
 }
 
@@ -41,4 +41,10 @@ func makeScatterGatherItem(fo fanOutResult, fi fanInResult) protocol.ScatterGath
 		ToBank:        fi.ToBank,
 		ToAccount:     fi.ToAccount,
 	}
+}
+
+type sgDelta struct {
+	ClientID  string                `json:"client_id"`
+	FanOut    []fanOutResult        `json:"fan_out,omitempty"`
+	FanIn     []fanInResult         `json:"fan_in,omitempty"`
 }

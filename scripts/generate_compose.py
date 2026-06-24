@@ -394,6 +394,11 @@ HEALTH_PORT = 9999
 # directory so it survives crashes. Uses the service_instance as filename.
 EOF_STATE_DIR = "/output/system/eof_state"
 
+# Checkpoint/WAL state directory for stateful nodes (aggregators, joiners, counters).
+# Each instance gets a subdirectory: {STATE_DIR_BASE}/{service_instance}.
+# Set to empty to disable persistence (stateless mode).
+STATE_DIR_BASE = "/output/system/state"
+
 
 def get_bool_env(env: dict[str, str], key: str, default: bool = False) -> bool:
     value = env.get(key)
@@ -577,6 +582,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k == "INPUT_KEY_PREFIX":
                     continue
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - STATE_DIR={STATE_DIR_BASE}/{svc_instance}")
             lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    volumes:")
@@ -622,6 +628,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
                 if k in ("INPUT_KEY_PREFIX", "INPUT_QUEUE_NAME_PREFIX", "EOF_CONTROL_KEY_PREFIX"):
                     continue
                 lines.append(f"      - {k}={v}")
+            lines.append(f"      - STATE_DIR={STATE_DIR_BASE}/{svc_instance}")
             lines.append(f"      - SCALABLE_EOF_STATE={EOF_STATE_DIR}/{svc_instance}.json")
             append_watcher_health_env(lines, watcher_enabled)
             lines.append(f"    volumes:")
@@ -651,6 +658,7 @@ def build_compose(env: dict[str, str], active_queries: set[str]) -> str:
         lines.append(f"      - UPSTREAM_INSTANCES={upstream}")
         lines.append(f"      - RABBITMQ_HOST=rabbitmq")
         lines.append(f"      - RABBITMQ_PORT=5672")
+        lines.append(f"      - STATE_DIR={STATE_DIR_BASE}/{svc_name}")
         lines.append(f"      - NODE_EOF_STATE={EOF_STATE_DIR}/{svc_name}.json")
         append_watcher_health_env(lines, watcher_enabled)
         lines.append(f"    volumes:")

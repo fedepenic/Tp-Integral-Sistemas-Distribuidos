@@ -1,9 +1,14 @@
 package main
 
+type accountRef struct {
+	Bank    string `json:"bank"`
+	Account string `json:"account"`
+}
+
 type fanOutEntry struct {
-	fromBank string
-	fromAcct string
-	refs     []accountRef
+	FromBank string       `json:"from_bank"`
+	FromAcct string       `json:"from_acct"`
+	Refs     []accountRef `json:"refs"`
 }
 
 type fanOutResult struct {
@@ -13,7 +18,7 @@ type fanOutResult struct {
 	MiddleAccount string `json:"middle_account"`
 }
 
-type accountRef struct {
-	bank    string
-	account string
+type fanOutDelta struct {
+	ClientID string               `json:"client_id"`
+	Entries  map[string]fanOutEntry `json:"entries"`
 }

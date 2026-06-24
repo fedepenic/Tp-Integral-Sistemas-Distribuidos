@@ -152,7 +152,13 @@ func loadClientProgress(path string) (*clientProgress, error) {
 
 	progress.lastACKedBatch = strings.TrimSpace(string(data))
 	if progress.lastACKedBatch != "" {
-		log.Printf("resuming after acknowledged batch %s", progress.lastACKedBatch)
+		if strings.HasSuffix(progress.lastACKedBatch, ":eof") {
+			log.Printf("previous run completed (EOF acknowledged) — starting fresh")
+			progress.lastACKedBatch = ""
+			os.Remove(path)
+		} else {
+			log.Printf("resuming after acknowledged batch %s", progress.lastACKedBatch)
+		}
 	}
 	return progress, nil
 }
