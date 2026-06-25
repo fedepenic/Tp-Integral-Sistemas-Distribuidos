@@ -19,7 +19,6 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 COMPOSE_FILE = Path(__file__).parent.parent / "system" / "docker-compose.yml"
@@ -166,17 +165,15 @@ def main() -> None:
 
     try:
         while True:
-            ts = datetime.now().strftime("%H:%M:%S")
             targets = choose_targets(services_by_kind, services_per_interval)
             if not targets:
-                print(f"[{ts}] No safe targets available. Waiting {interval}s...\n")
+                print(f"No safe targets available. Waiting {interval}s...\n")
                 time.sleep(interval)
                 continue
-            print(f"[{ts}] Killing: {', '.join(targets)}")
+            print(f"Killing: {', '.join(targets)}")
             for target in targets:
                 kill_service(target)
-            ts = datetime.now().strftime("%H:%M:%S")
-            print(f"[{ts}] Done. Next kill round in {interval}s...\n")
+            print(f"Done. Next kill round in {interval}s...\n")
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\nChaos stopped.")
