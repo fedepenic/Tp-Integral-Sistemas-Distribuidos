@@ -42,7 +42,8 @@
     }
     .controls button:hover { background: rgba(255,255,255,0.35); }
 
-    #zoom-label { color: white; font-size: 0.85rem; min-width: 46px; text-align: center; }
+    #zoom-input { width: 52px; text-align: center; font-size: 0.85rem; background: #374151; color: white; border: 1px solid #4b5563; border-radius: 4px; padding: 2px 4px; -moz-appearance: textfield; }
+  #zoom-input::-webkit-inner-spin-button, #zoom-input::-webkit-outer-spin-button { -webkit-appearance: none; }
 
     .legend {
       display: flex;
@@ -86,11 +87,11 @@
 <body>
 
 <header>
-  <h1>Diagrama de Robustez — Money Laundering Analysis (75.74)</h1>
+  <h1>Diagrama de Robustez — Money Laundering Analysis</h1>
   <div class="controls">
     <button id="btn-fit">Ajustar</button>
     <button id="btn-minus">−</button>
-    <span id="zoom-label">100%</span>
+    <input id="zoom-input" type="number" value="45" min="10" max="400" step="5">%
     <button id="btn-plus">+</button>
     <button id="btn-reset">Reset</button>
   </div>
@@ -137,6 +138,7 @@ flowchart LR
     UserIn(["User"]):::actorM
     UserOut(["User"]):::actorM
     TxnDS["Transactions File"]:::file
+    BanksDS["Banks File"]:::file
     ERDS(["Frankfurter API"]):::extApi
 
     subgraph SYS["Sistema: Money Laundering Analysis"]
@@ -158,53 +160,54 @@ flowchart LR
         usd_for_q3p2(["usd_for_q3p2"]):::queue
         usd_for_p1(["usd_for_p1"]):::queue
 
-        %% ─── Q1: USD < 50 ──────────────────────────────────────────────
+        %% --- Q1: USD < 50 ---
         AmtFilt50(["Amount &lt; 50 Filter"]):::filterM
         q1_q(["q1_data"]):::queue
-        SinkQ1(("Q1\nUSD &lt; 50")):::sink
 
-        %% ─── Q2: Max USD por banco ────────────────────────────────────
+        %% --- Q2: Max USD por banco ---
+        join_q2_input{{"join_q2_input\n(direct)"}}:::exchange
         MaxBank(["Max Per Bank"]):::counterM
-        join_q2_input{{"join_q2_input"}}:::exchange
-        JoinQ2(["join_q2"]):::joinerM
+        JoinQ2(["Join Q2"]):::joinerM
         q2_q(["q2_data"]):::queue
-        SinkQ2(("Q2\nMax/Bank")):::sink
 
-        %% ─── Q3-P2: USD del Period 2 ──────────────────────────────────
+        %% --- Q3-P2: USD del Period 2 ---
         P2Filt(["Period 2 Filter\n09-06 / 09-15"]):::filterM
-        p2_q{{"usd_period2"}}:::exchange
+        p2_q{{"usd_period2\n(direct)"}}:::exchange
 
-        %% ─── Period 1 Filter único compartido por Q3-P1, Q4-FO y Q4-FI ───
+        %% --- Period 1 Filter ---
         P1Filt(["Period 1 Filter\n09-01 / 09-05"]):::filterM
         usdp1_q3{{"usd_period1_for_q3\n(direct)"}}:::exchange
-        usdp1_q4o{{"usd_period1_for_q4_fo\n(direct)"}}:::exchange
-        usdp1_q4i{{"usd_period1_for_q4_fi\n(direct)"}}:::exchange
+        usdp1_q4{{"usd_period1_for_q4\n(direct)"}}:::exchange
 
-        %% ─── Q3-P1: avg por payment_format en Period 1 ────────────────
+        %% --- Q3-P1 ---
         AvgFmt(["Avg per Payment Format"]):::counterM
-        avg_q{{"avg_per_format"}}:::exchange
+        avg_q{{"avg_per_format\n(direct)"}}:::exchange
 
         JoinQ3(["Joiner format"]):::joinerM
         q3c_q(["q3_candidates"]):::queue
         SmallFilt(["Amount &lt; avg/100 Filter"]):::filterM
         q3_q(["q3_data"]):::queue
-        SinkQ3(("Q3\nSmall Txn")):::sink
 
-        %% ─── Q4 — pipeline FanOut ─────────────────────────────────────
+        %% --- Fan Source Filter (Q4) ---
+        FanSrcFilt(["Fan Source Filter\n≥5 destinos"]):::counterM
+        usdp1_q4o{{"usd_period1_for_q4_fo\n(direct)"}}:::exchange
+        usdp1_q4i{{"usd_period1_for_q4_fi\n(direct)"}}:::exchange
+
+        %% --- Q4: FanOut ---
         FanOut(["Fan-Out Detector\n5+ destinos"]):::counterM
-        fo_q{{"fanout_accounts"}}:::exchange
+        fo_q{{"scatter_gather_fo\n(direct)"}}:::exchange
 
-        %% ─── Q4 — pipeline FanIn ──────────────────────────────────────
+        %% --- Q4: FanIn ---
         FanIn(["Fan-In Detector\n5+ orígenes"]):::counterM
-        fi_q{{"fanin_accounts"}}:::exchange
+        fi_q{{"scatter_gather_fi\n(direct)"}}:::exchange
 
-        SGJoin(["Scatter-Gather Joiner"]):::joinerM
-        sg_triples_q{{"sg_triples\n(direct)"}}:::exchange
+        SGJoin(["SG Joiner"]):::joinerM
+        sg_data{{"scatter_gather_data\n(direct)"}}:::exchange
+
         SGAgg(["SG Aggregator\n5+ intermediarias"]):::counterM
         q4_q(["q4_data"]):::queue
-        SinkQ4(("Q4\nScatter\nGather")):::sink
 
-        %% ─── Q5 — pipeline Wire/ACH (no necesita USD filter) ─────────
+        %% --- Q5 ---
         subgraph Q5Pipe[" "]
             direction TB
             P1Filt_Q5(["Period 1 Filter\n09-01 / 09-05"]):::filterM
@@ -215,88 +218,121 @@ flowchart LR
             conv_q(["converted_usd"]):::queue
             AmtFiltQ5(["USD &lt; 1 Filter"]):::filterM
             q5f_q(["q5_filtered"]):::queue
-            CntQ5(["Partial Counter"]):::counterM
-            q5_partial_q(["q5_partials"]):::queue
-            Q5Sum(["Sum Reducer"]):::counter
+            CounterQ5(["Counter"]):::counter
             q5_q(["q5_count"]):::queue
+        end
+
+        subgraph SINKS[" "]
+            direction TB
+            SinkQ1(("Q1\nUSD &lt; 50")):::sink
+            SinkQ2(("Q2\nMax/Bank")):::sink
+            SinkQ3(("Q3\nSmall Txn")):::sink
+            SinkQ4(("Q4\nScatter\nGather")):::sink
             SinkQ5(("Q5\nCount")):::sink
         end
 
-        report_q(["report"]):::queue
-
+        report_q(["reports"]):::queue
         GatewayOut(["Gateway"]):::gateway
         Watcher(["Watcher"]):::watcher
     end
 
-    TxnDS  --> UserIn
-    UserIn --> Gateway
-    ERDS --> Conv
+    %% --- Entry / User ---
+    TxnDS  -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nAmount Received,\nReceiving Currency,\nPayment Format»"| UserIn
+    BanksDS -->|"«Bank Name,\nBank ID,\nAccount Number,\nEntity ID,\nEntity Name»"| UserIn
+    UserIn -->|"«transactions file + accounts file»"| Gateway
 
-    Gateway --> raw_q --> Cleaner --> txn_q
+    %% --- Main pipeline ---
+    Gateway -->|"«transactions file + accounts file»"| raw_q
+    raw_q -->|"«transactions file + accounts file»"| Cleaner
+    Cleaner -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| txn_q
 
-    txn_q --> bind_for_usd
-    txn_q --> bind_for_q5
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_usd
+    txn_q -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| bind_for_q5
 
-    bind_for_usd --> USDFilt --> usd_fanout
+    bind_for_usd -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| USDFilt
+    USDFilt -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_fanout
 
-    usd_fanout --> usd_for_q1
-    usd_fanout --> usd_for_q2
-    usd_fanout --> usd_for_q3p2
-    usd_fanout --> usd_for_p1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q1
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_q3p2
+    usd_fanout -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| usd_for_p1
 
-    %% ─── Q1 ─────────────────────────────────────────────
-    usd_for_q1 --> AmtFilt50 --> q1_q --> SinkQ1
+    %% --- Q1: USD < 50 ---
+    usd_for_q1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| AmtFilt50
+    AmtFilt50 -->|"«From Account,\nTo Account,\nAmount Paid»"| q1_q
+    q1_q -->|"«From Account,\nTo Account,\nAmount Paid»"| SinkQ1
 
-    %% ─── Q2 ─────────────────────────────────────────────
-    usd_for_q2 -->|key: bank_id| MaxBank
-    Cleaner --> join_q2_input
-    MaxBank --> join_q2_input
-    join_q2_input --> JoinQ2
-    JoinQ2 --> q2_q --> SinkQ2
+    %% --- Q2: Max USD por banco ---
+    Cleaner -->|"«Bank ID,\nBank Name»"| join_q2_input
+    usd_for_q2 -->|"From Bank · «Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| MaxBank
+    MaxBank -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| join_q2_input
+    join_q2_input -->|"Bank ID · «Bank Name,\nFrom Account,\nAmount Paid»"| JoinQ2
+    JoinQ2 -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| q2_q
+    q2_q -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| SinkQ2
 
-    %% ─── Q3-P2 ──────────────────────────────────────────
-    usd_for_q3p2 --> P2Filt --> p2_q
-    p2_q -->|key: payment_format| JoinQ3
+    %% --- Q3-P2: USD del Period 2 ---
+    usd_for_q3p2 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| P2Filt
+    P2Filt -->|"«From Account,\nPayment Format,\nAmount Paid»"| p2_q
+    p2_q -->|"Payment Format · «From Account,\nPayment Format,\nAmount Paid»"| JoinQ3
 
-    %% ─── Period 1 ───────────────────────────────────────
-    usd_for_p1 --> P1Filt
-    P1Filt --> usdp1_q3
-    P1Filt --> usdp1_q4o
-    P1Filt --> usdp1_q4i
+    %% --- Period 1 Filter ---
+    usd_for_p1 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Format»"| P1Filt
+    P1Filt -->|"«Payment Format,\nAmount Paid»"| usdp1_q3
+    P1Filt -->|"«From Account,\nTo Account»"| usdp1_q4
 
-    %% ─── Q3-P1 ──────────────────────────────────────────
-    usdp1_q3 -->|key: payment_format| AvgFmt
-    AvgFmt --> avg_q
-    avg_q -->|key: payment_format| JoinQ3
-    JoinQ3 --> q3c_q --> SmallFilt --> q3_q --> SinkQ3
+    %% --- Q3-P1: Avg por payment_format ---
+    usdp1_q3 -->|"Payment Format · «Payment Format,\nAmount Paid»"| AvgFmt
+    AvgFmt -->|"«Payment Format,\navg(Amount Paid)»"| avg_q
+    avg_q -->|"Payment Format · «Payment Format,\navg(Amount Paid)»"| JoinQ3
+    JoinQ3 -->|"«From Account,\nPayment Format,\nAmount Paid,\navg(Amount Paid)»"| q3c_q
+    q3c_q -->|"«From Account,\nPayment Format,\nAmount Paid,\navg(Amount Paid)»"| SmallFilt
+    SmallFilt -->|"«From Account,\nAmount Paid»"| q3_q
+    q3_q -->|"«From Account,\nAmount Paid»"| SinkQ3
 
-    %% ─── Q4 ─────────────────────────────────────────────
-    usdp1_q4o -->|key: from_account| FanOut
-    FanOut --> fo_q
-    fo_q -->|key: middle_account| SGJoin
+    %% --- Q4: Fan Source Filter ---
+    usdp1_q4 -->|"From Account · «From Account,\nTo Account»"| FanSrcFilt
+    FanSrcFilt -->|"«From Account,\nTo Account»"| usdp1_q4o
+    FanSrcFilt -->|"«From Account,\nTo Account»"| usdp1_q4i
 
-    usdp1_q4i -->|key: to_account| FanIn
-    FanIn --> fi_q
-    fi_q -->|key: middle_account| SGJoin
+    usdp1_q4o -->|"From Account · «From Account,\nTo Account»"| FanOut
+    FanOut -->|"«From Account,\nTo Account»"| fo_q
+    fo_q -->|"To Account · «From Account,\nTo Account»"| SGJoin
 
-    SGJoin --> sg_triples_q
-    sg_triples_q -->|key: A,C| SGAgg
-    SGAgg --> q4_q --> SinkQ4
+    usdp1_q4i -->|"To Account · «From Account,\nTo Account»"| FanIn
+    FanIn -->|"«From Account,\nTo Account»"| fi_q
+    fi_q -->|"From Account · «From Account,\nTo Account»"| SGJoin
 
-    %% ─── Q5 ─────────────────────────────────────────────
-    bind_for_q5 --> P1Filt_Q5 --> period1_q5 --> WAFilt --> wa_q --> Conv
-    Conv --> conv_q --> AmtFiltQ5 --> q5f_q --> CntQ5
-    CntQ5 --> q5_partial_q --> Q5Sum --> q5_q --> SinkQ5
+    SGJoin -->|"«From Account,\nMiddle Account,\nTo Account»"| sg_data
+    sg_data -->|"(From,To) · «From Account,\nMiddle Account,\nTo Account»"| SGAgg
+    SGAgg -->|"«From Account,\nTo Account»"| q4_q
+    q4_q -->|"«From Account,\nTo Account»"| SinkQ4
 
-    SinkQ1 --> report_q
-    SinkQ2 --> report_q
-    SinkQ3 --> report_q
-    SinkQ4 --> report_q
-    SinkQ5 --> report_q
-    report_q --> GatewayOut
-    GatewayOut -.-> UserOut
+    %% --- Q5: Wire/ACH en Period 1 con USD < 1 ---
+    bind_for_q5 -->|"«Timestamp,\nFrom Bank,\nFrom Account,\nTo Bank,\nTo Account,\nAmount Paid,\nPayment Currency,\nPayment Format»"| P1Filt_Q5
+    P1Filt_Q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| period1_q5
+    period1_q5 -->|"«Payment Format,\nAmount Paid,\nPayment Currency»"| WAFilt
+    WAFilt -->|"«Amount Paid,\nPayment Currency»"| wa_q
+    wa_q -->|"«Amount Paid,\nPayment Currency»"| Conv
+    Conv -->|"«amount_usd»"| conv_q
+    conv_q -->|"«amount_usd»"| AmtFiltQ5
+    AmtFiltQ5 -->|"«amount_usd»"| q5f_q
+    q5f_q -->|"«amount_usd»"| CounterQ5
+    CounterQ5 -->|"«total_count»"| q5_q
+    q5_q -->|"«total_count»"| SinkQ5
+
+    %% --- Sinks -> report ---
+    SinkQ1 -->|"«From Account,\nTo Account,\nAmount Paid»"| report_q
+    SinkQ2 -->|"«Bank Name,\nFrom Account,\nAmount Paid»"| report_q
+    SinkQ3 -->|"«From Account,\nAmount Paid»"| report_q
+    SinkQ4 -->|"«From Account,\nTo Account»"| report_q
+    SinkQ5 -->|"«total_count»"| report_q
+    report_q -->|"«Q1..Q5 results»"| GatewayOut
+    GatewayOut -.->|"«Q1..Q5 results»"| UserOut
+
+    ERDS -->|"«currency rates»"| Conv
 
     style Q5Pipe fill:none,stroke:none
+    style SINKS fill:none,stroke:none
     </div>
   </div>
 </div>
@@ -317,14 +353,14 @@ flowchart LR
 
   const wrapper   = document.getElementById('canvas-wrapper');
   const container = document.getElementById('diagram-container');
-  const zoomLabel = document.getElementById('zoom-label');
+  const zoomInput = document.getElementById('zoom-input');
 
-  let scale = 1, panX = 0, panY = 0;
+  let scale = 0.45, panX = 0, panY = 0;
   let isDragging = false, startX, startY;
 
   function applyTransform() {
     container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    zoomLabel.textContent = Math.round(scale * 100) + '%';
+    zoomInput.value = Math.round(scale * 100);
   }
 
   function fitDiagram() {
@@ -488,10 +524,18 @@ flowchart LR
     });
   }
 
-  document.getElementById('btn-plus').addEventListener('click',  () => { scale = Math.min(scale + 0.15, 4);   applyTransform(); });
-  document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.15, 0.1); applyTransform(); });
+
+
+  document.getElementById('btn-plus').addEventListener('click',  () => { scale = Math.min(scale + 0.05, 4);   applyTransform(); });
+  document.getElementById('btn-minus').addEventListener('click', () => { scale = Math.max(scale - 0.05, 0.1); applyTransform(); });
   document.getElementById('btn-reset').addEventListener('click', () => { scale = 1; panX = 0; panY = 0; applyTransform(); });
   document.getElementById('btn-fit').addEventListener('click',   fitDiagram);
+
+  zoomInput.addEventListener('change', () => {
+    const v = Math.min(Math.max(parseInt(zoomInput.value, 10) || 100, 10), 400);
+    scale = v / 100;
+    applyTransform();
+  });
 
   wrapper.addEventListener('wheel', e => {
     e.preventDefault();
@@ -504,7 +548,7 @@ flowchart LR
   window.addEventListener('mouseup', () => { isDragging = false; });
 
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => { makeFileShapes(); makeHorizontalCylinders(); applyMultiShadow(); trimAllArrows(); fitDiagram(); }, 800);
+    setTimeout(() => { makeFileShapes(); makeHorizontalCylinders(); applyMultiShadow(); trimAllArrows(); applyTransform(); }, 800);
   });
 </script>
 </body>

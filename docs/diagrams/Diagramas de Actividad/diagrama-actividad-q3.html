@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrama de Actividad — Query 3 (Small Txn por formato)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; }
+    header { background: #3b6fd4; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    header h1 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .controls button { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; }
+    .controls button:hover { background: rgba(255,255,255,0.35); }
+    #zoom-label { color: white; font-size: 0.85rem; min-width: 46px; text-align: center; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 24px; background: white; border-bottom: 1px solid #ddd; align-items: center; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #444; }
+    .legend-circle { width: 16px; height: 16px; border-radius: 50%; background: #000; flex-shrink: 0; }
+    .legend-final { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #000; background: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .legend-final::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #000; }
+    .legend-flow { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #000; background: #fff; position: relative; flex-shrink: 0; }
+    .legend-flow::before, .legend-flow::after { content: ''; position: absolute; top: 50%; left: 50%; width: 10px; height: 2px; background: #000; }
+    .legend-flow::before { transform: translate(-50%, -50%) rotate( 45deg); }
+    .legend-flow::after  { transform: translate(-50%, -50%) rotate(-45deg); }
+    .legend-action { width: 26px; height: 14px; background: #fff; border: 1px solid #333; border-radius: 2px; flex-shrink: 0; }
+    .legend-decision { width: 16px; height: 16px; background: #fff; border: 1px solid #333; transform: rotate(45deg); flex-shrink: 0; }
+    .legend-queue { width: 32px; height: 14px; background: #d4b896; border: 1.5px solid #997a50; border-radius: 8px; flex-shrink: 0; }
+    .legend-sep { width: 1px; height: 24px; background: #ddd; }
+    #canvas-wrapper { overflow: hidden; width: 100%; height: calc(100vh - 116px); cursor: grab; position: relative; }
+    #canvas-wrapper:active { cursor: grabbing; }
+    #diagram-container { display: inline-block; padding: 32px; transform-origin: top left; user-select: none; }
+    #diagram-container svg { display: block; max-width: none !important; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Diagrama de Actividad — Query 3 (Small Txn por formato)</h1>
+  <div class="controls">
+    <button id="btn-fit">Ajustar</button>
+    <button id="btn-minus">−</button>
+    <span id="zoom-label">100%</span>
+    <button id="btn-plus">+</button>
+    <button id="btn-reset">Reset</button>
+  </div>
+</header>
+<div class="legend">
+  <div class="legend-item"><div class="legend-circle"></div> Inicio</div>
+  <div class="legend-item"><div class="legend-final"></div> Fin actividad</div>
+  <div class="legend-item"><div class="legend-flow"></div> Fin flujo parcial</div>
+  <div class="legend-item"><div class="legend-action"></div> Actividad</div>
+  <div class="legend-item"><div class="legend-decision"></div> Decisión</div>
+  <div class="legend-sep"></div>
+  <div class="legend-item"><div class="legend-queue"></div> Cola / Exchange</div>
+</div>
+<div id="canvas-wrapper">
+  <div id="diagram-container">
+    <div class="mermaid">
+---
+config:
+  layout: elk
+  elk:
+    mergeEdges: false
+    nodePlacementStrategy: NETWORK_SIMPLEX
+  flowchart:
+    curve: stepAfter
+---
+flowchart TB
+    classDef startN        fill:#000,stroke:#000,color:#fff
+    classDef activityFinal fill:#fff,stroke:#000,stroke-width:2px,color:#fff
+    classDef flowFinal     fill:#fff,stroke:#000,stroke-width:2px,color:#fff
+    classDef action        fill:#fff,stroke:#333,color:#333
+    classDef decision      fill:#fff,stroke:#333,color:#333
+    classDef queue         fill:#d4b896,stroke:#997a50,color:#333
+
+    subgraph P1["Period1Filter (multi-instancia, coordinado)"]
+      direction LR
+      p1_start((●)):::startN
+      p1_listen["Listen to usd_filtered<br/>key: (all)"]:::action
+      p1_recv["Receive"]:::action
+      p1_eof{"Is EOF?"}:::decision
+      p1_date{"¿Fecha entre<br/>Sep 1-5?"}:::decision
+      p1_q3["Publish (PaymentFormat,<br/>AmountPaid) a<br/>usd_period1_for_q3<br/>key: avgfmt_{hash(PF)}"]:::action
+      p1_q4["Publish (FromAccount,<br/>ToAccount) a<br/>usd_period1_for_q4<br/>key: q4sf_{hash(FA)}"]:::action
+      p1_fwd["Forward EOF"]:::action
+      p1_ack["Send ACK"]:::action
+      p1_end((( ))):::activityFinal
+    end
+
+    p1_start --> p1_listen --> p1_recv --> p1_eof
+    p1_eof -- "Yes" --> p1_fwd --> p1_ack --> p1_end
+    p1_eof -- "No" --> p1_date
+    p1_date -- "Yes (Período 1)" --> p1_q3
+    p1_q3 --> p1_ack --> p1_listen
+    p1_date -- "No (fuera rango)" --> p1_ack --> p1_listen
+
+    usd_p1_q3(["usd_period1_for_q3 (direct)"]):::queue
+
+    subgraph AVG["AvgPerPaymentFormat (particionado, stateful)"]
+      direction LR
+      av_start((●)):::startN
+      av_listen["Listen to<br/>usd_period1_for_q3<br/>key: avgfmt_{i-1}"]:::action
+      av_recv["Receive"]:::action
+      av_eof{"Is EOF?"}:::decision
+      av_acc["sum[pf] += Amount<br/>count[pf] += 1"]:::action
+      av_flush["Flush: emit avg per PF<br/>(PF, avg = sum/count)<br/>a avg_per_format"]:::action
+      av_fwd["Forward EOF"]:::action
+      av_ack["Send ACK"]:::action
+      av_end((( ))):::activityFinal
+    end
+
+    av_start --> av_listen --> av_recv --> av_eof
+    av_eof -- "Yes" --> av_flush --> av_fwd --> av_ack --> av_end
+    av_eof -- "No" --> av_acc --> av_ack --> av_listen
+
+    avg_q(["avg_per_format (direct)"]):::queue
+
+    subgraph P2["Period2Filter (multi-instancia, coordinado)"]
+      direction LR
+      p2_start((●)):::startN
+      p2_listen["Listen to usd_filtered"]:::action
+      p2_recv["Receive"]:::action
+      p2_eof{"Is EOF?"}:::decision
+      p2_date{"¿Fecha entre<br/>Sep 6-14?"}:::decision
+      p2_pub["Publish (PF, Account,<br/>AmountPaid) a<br/>usd_period2<br/>key: joinerformat_{hash(PF)}"]:::action
+      p2_fwd["Forward EOF"]:::action
+      p2_ack["Send ACK"]:::action
+      p2_end((( ))):::activityFinal
+    end
+
+    p2_start --> p2_listen --> p2_recv --> p2_eof
+    p2_eof -- "Yes" --> p2_fwd --> p2_ack --> p2_end
+    p2_eof -- "No" --> p2_date
+    p2_date -- "Yes (Período 2)" --> p2_pub --> p2_ack --> p2_listen
+    p2_date -- "No" --> p2_ack --> p2_listen
+
+    p2_q(["usd_period2 (direct)"]):::queue
+
+    subgraph JOIN_Q3["JoinQ3 (particionado por PF, stateful con WAL)"]
+      direction LR
+      j_start((●)):::startN
+      ja_listen["Listen to avg_per_format<br/>key: joinerformat_{i-1}"]:::action
+      jb_listen["Listen to usd_period2<br/>key: joinerformat_{i-1}"]:::action
+      ja_recv["Receive avg"]:::action
+      jb_recv["Receive txn"]:::action
+      ja_eof{"EOF avg?"}:::decision
+      jb_eof{"EOF txn?"}:::decision
+      ja_store["avg_state[pf] = avg<br/>Flush pending[pf] →<br/>q3_candidates"]:::action
+      jb_known{"¿avg_state[pf]<br/>disponible?"}:::decision
+      jb_emit["Publish (txn, avg)<br/>a q3_candidates"]:::action
+      jb_buf["Buffer txn<br/>en pending[pf]"]:::action
+      ja_ack["Send ACK"]:::action
+      jb_ack["Send ACK"]:::action
+      ja_mark["avg_eof = true"]:::action
+      jb_mark["txn_eof = true"]:::action
+      ja_check{"¿txn_eof<br/>also true?"}:::decision
+      jb_check{"¿avg_eof<br/>also true?"}:::decision
+      j_fwd["Forward EOF a<br/>q3_candidates"]:::action
+      j_end((( ))):::activityFinal
+      ja_flow((( ))):::flowFinal
+      jb_flow((( ))):::flowFinal
+    end
+
+    j_start --> ja_listen
+    j_start --> jb_listen
+    ja_listen --> ja_recv --> ja_eof
+    jb_listen --> jb_recv --> jb_eof
+    ja_eof -- "Yes" --> ja_mark --> ja_check
+    ja_check -- "Yes" --> j_fwd --> j_end
+    ja_check -- "No" --> ja_flow
+    ja_eof -- "No (avg data)" --> ja_store --> ja_ack --> ja_listen
+    jb_eof -- "Yes" --> jb_mark --> jb_check
+    jb_check -- "Yes" --> j_fwd
+    jb_check -- "No" --> jb_flow
+    jb_eof -- "No (txn data)" --> jb_known
+    jb_known -- "Yes" --> jb_emit --> jb_ack --> jb_listen
+    jb_known -- "No" --> jb_buf --> jb_ack --> jb_listen
+
+    avg_q -.-> ja_recv
+    p2_q -.-> jb_recv
+
+    q3c_q(["q3_candidates"]):::queue
+
+    subgraph AMT_AVG["AmtAvgFilter (multi-instancia, coordinado)"]
+      direction LR
+      aa_start((●)):::startN
+      aa_listen["Listen to q3_candidates"]:::action
+      aa_recv["Receive"]:::action
+      aa_eof{"Is EOF?"}:::decision
+      aa_check{"AmountPaid<br/>&lt; AvgForFormat<br/>/ 100 ?"}:::decision
+      aa_pub["Publish (Account,<br/>AmountPaid)<br/>a q3_data"]:::action
+      aa_fwd["Forward EOF a q3_data"]:::action
+      aa_ack["Send ACK"]:::action
+      aa_end((( ))):::activityFinal
+    end
+
+    aa_start --> aa_listen --> aa_recv --> aa_eof
+    aa_eof -- "Yes" --> aa_fwd --> aa_ack --> aa_end
+    aa_eof -- "No" --> aa_check
+    aa_check -- "Yes" --> aa_pub --> aa_ack --> aa_listen
+    aa_check -- "No" --> aa_ack --> aa_listen
+
+    q3_q(["q3_data"]):::queue
+
+    subgraph SINK["SinkQ3 (single)"]
+      direction LR
+      s_start((●)):::startN
+      s_listen["Listen to q3_data"]:::action
+      s_recv["Receive"]:::action
+      s_eof{"Is EOF?"}:::decision
+      s_wrap["Wrap (client_id,<br/>query=Q3, payload)"]:::action
+      s_publish["Publish a reports"]:::action
+      s_notify["Marcar Q3 completo"]:::action
+      s_pub_eof["Publish EOF a reports"]:::action
+      s_ack["Send ACK"]:::action
+      s_end((( ))):::activityFinal
+    end
+
+    s_start --> s_listen --> s_recv --> s_eof
+    s_eof -- "No" --> s_wrap --> s_publish --> s_ack --> s_listen
+    s_eof -- "Yes" --> s_notify --> s_pub_eof --> s_ack --> s_end
+
+    ja_store & jb_emit & j_fwd -.-> q3c_q
+    q3c_q -.-> aa_recv
+    aa_pub & aa_fwd -.-> q3_q
+    q3_q -.-> s_recv
+
+    style P1 fill:#f0f4ff,stroke:#a0b4dd,stroke-dasharray:4
+    style P2 fill:#f0f4ff,stroke:#a0b4dd,stroke-dasharray:4
+    style AVG fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style JOIN_Q3 fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style AMT_AVG fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style SINK fill:#fafafa,stroke:#999,stroke-dasharray:0
+    </div>
+  </div>
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true, theme: 'default', fontSize: 18,
+    layout: 'elk',
+    flowchart: { useMaxWidth: false, curve: 'stepAfter', nodeSpacing: 50, rankSpacing: 80, padding: 18 },
+    elk: { mergeEdges: false, nodePlacementStrategy: 'NETWORK_SIMPLEX' }
+  });
+  const wrapper = document.getElementById('canvas-wrapper');
+  const container = document.getElementById('diagram-container');
+  const zoomLabel = document.getElementById('zoom-label');
+  let scale = 1, panX = 0, panY = 0, isDragging = false, startX, startY;
+  function applyTransform() { container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`; zoomLabel.textContent = Math.round(scale * 100) + '%'; }
+  function fitDiagram() {
+    const svg = container.querySelector('svg'); if (!svg) return;
+    const svgW = svg.getBoundingClientRect().width / scale;
+    const svgH = svg.getBoundingClientRect().height / scale;
+    scale = Math.min((wrapper.clientWidth - 64) / svgW, (wrapper.clientHeight - 64) / svgH, 1);
+    panX = (wrapper.clientWidth  - svgW * scale) / 2;
+    panY = (wrapper.clientHeight - svgH * scale) / 2;
+    applyTransform();
+  }
+  function makeCylinders() {
+    const FILL='#d4b896',FILL_DARK='#b89a7a',STROKE='#997a50',ns='http://www.w3.org/2000/svg';
+    document.querySelectorAll('.node.queue').forEach(node => {
+      const shape = node.querySelector('rect, polygon, path'); if (!shape) return;
+      let W=0,H=0,x=0,y=0;
+      if (shape.tagName==='rect') { W=parseFloat(shape.getAttribute('width')); H=parseFloat(shape.getAttribute('height')); x=parseFloat(shape.getAttribute('x')??-W/2); y=parseFloat(shape.getAttribute('y')??-H/2); }
+      else { const bb=shape.getBBox(); W=bb.width; H=bb.height; x=bb.x; y=bb.y; }
+      const PAD=44,W2=W+PAD*2,x2=x-PAD,capRx=Math.min(H*0.44,W2*0.18),capRy=H/2,cx1=x2+capRx,cx2=x2+W2-capRx,cy=y+capRy;
+      shape.remove();
+      const make=(t,a)=>{const e=document.createElementNS(ns,t);Object.entries(a).forEach(([k,v])=>e.setAttribute(k,String(v)));return e;};
+      const label=node.querySelector('.label, foreignObject, .nodeLabel');
+      const ins=el=>label?node.insertBefore(el,label):node.appendChild(el);
+      ins(make('ellipse',{cx:cx1,cy,rx:capRx,ry:capRy,fill:FILL_DARK,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('rect',{x:cx1,y,width:cx2-cx1,height:H,fill:FILL,stroke:'none'}));
+      ins(make('line',{x1:cx1,y1:y,x2:cx2,y2:y,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('line',{x1:cx1,y1:y+H,x2:cx2,y2:y+H,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('ellipse',{cx:cx2,cy,rx:capRx,ry:capRy,fill:FILL,stroke:STROKE,'stroke-width':1.5}));
+    });
+  }
+  document.getElementById('btn-plus').addEventListener('click',()=>{scale=Math.min(scale+0.15,4);applyTransform();});
+  document.getElementById('btn-minus').addEventListener('click',()=>{scale=Math.max(scale-0.15,0.1);applyTransform();});
+  document.getElementById('btn-reset').addEventListener('click',()=>{scale=1;panX=0;panY=0;applyTransform();});
+  document.getElementById('btn-fit').addEventListener('click',fitDiagram);
+  wrapper.addEventListener('wheel',e=>{e.preventDefault();scale=Math.min(Math.max(scale+(e.deltaY>0?-0.1:0.1),0.1),4);applyTransform();},{passive:false});
+  wrapper.addEventListener('mousedown',e=>{isDragging=true;startX=e.clientX-panX;startY=e.clientY-panY;});
+  window.addEventListener('mousemove',e=>{if(!isDragging)return;panX=e.clientX-startX;panY=e.clientY-startY;applyTransform();});
+  window.addEventListener('mouseup',()=>{isDragging=false;});
+  document.addEventListener('DOMContentLoaded',()=>{setTimeout(()=>{makeCylinders();fitDiagram();},600);});
+</script>
+</body>
+</html>
