@@ -76,7 +76,6 @@ type StateManager struct {
 	checkpointFreq int
 
 	state json.RawMessage
-	dedup map[string]struct{}
 
 	walFile *os.File
 	walPath string
@@ -104,7 +103,6 @@ func NewStateManager(nodeName, stateID, dirPath string, checkpointFreq int) *Sta
 		stateID:        stateID,
 		dirPath:        dirPath,
 		checkpointFreq: checkpointFreq,
-		dedup:          make(map[string]struct{}),
 		walPath:        filepath.Join(dirPath, "wal.log"),
 	}
 }
@@ -164,27 +162,6 @@ func (sm *StateManager) AppendWAL(batchID string, delta json.RawMessage) error {
 	return nil
 }
 
-// MarkApplied records a batchID as having its delta applied to state.
-// Prevents double-application of the same WAL entry during recovery.
-func (sm *StateManager) MarkApplied(batchID string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if sm.Enabled() && batchID != "" {
-		sm.dedup[batchID] = struct{}{}
-	}
-}
-
-// IsApplied checks whether a batchID has already been applied.
-func (sm *StateManager) IsApplied(batchID string) bool {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if !sm.Enabled() {
-		return false
-	}
-	_, ok := sm.dedup[batchID]
-	return ok
-}
-
 // ShouldCheckpoint returns true every checkpointFreq calls.
 func (sm *StateManager) ShouldCheckpoint() bool {
 	sm.mu.Lock()
@@ -194,17 +171,6 @@ func (sm *StateManager) ShouldCheckpoint() bool {
 	}
 	sm.batchCount++
 	return sm.batchCount%sm.checkpointFreq == 0
-}
-
-// GetDedup returns a copy of the current dedup set.
-func (sm *StateManager) GetDedup() map[string]struct{} {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	cp := make(map[string]struct{}, len(sm.dedup))
-	for k := range sm.dedup {
-		cp[k] = struct{}{}
-	}
-	return cp
 }
 
 // rotateWAL atomically starts a new WAL cycle after a checkpoint.
@@ -220,7 +186,6 @@ func (sm *StateManager) rotateWAL() {
 		return
 	}
 	sm.walFile = f
-	sm.dedup = make(map[string]struct{})
 }
 
 // SaveCheckpoint writes the full node state atomically.

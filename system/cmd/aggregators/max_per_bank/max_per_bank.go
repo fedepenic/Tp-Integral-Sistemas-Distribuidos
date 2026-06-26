@@ -60,7 +60,7 @@ func (m *maxPerBank) process(batch protocol.Batch) (protocol.Batch, bool) {
 	m.applyDelta(delta)
 
 	if batch.BatchID != "" {
-		m.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if m.sm.ShouldCheckpoint() {
@@ -140,7 +140,7 @@ func (m *maxPerBank) recover() {
 			continue
 		}
 		m.applyDelta(delta)
-		m.sm.MarkApplied(entry.BatchID)
+
 	}
 	log.Printf("[max_per_bank] recovery done: %d WAL entries replayed", len(entries))
 }

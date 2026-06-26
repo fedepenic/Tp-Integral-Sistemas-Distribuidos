@@ -148,7 +148,7 @@ func (j *joinerSG) process(batch protocol.Batch) (protocol.Batch, bool) {
 	j.states[batch.ClientID] = state
 	if batch.BatchID != "" {
 		j.deduper.Mark(batch.BatchID)
-		j.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if j.sm.ShouldCheckpoint() {
@@ -215,7 +215,7 @@ func (j *joinerSG) recover() {
 		// inputs (fan-in/fan-out refs), not the resolved items, to keep the WAL
 		// small — so we recompute rather than persist them.
 		items := j.applyDelta(delta)
-		j.sm.MarkApplied(entry.BatchID)
+
 		j.deduper.Mark(entry.BatchID)
 
 		// Re-emit downstream. The WAL entry is persisted (and the batch marked

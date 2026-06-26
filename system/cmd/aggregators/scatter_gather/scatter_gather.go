@@ -72,7 +72,7 @@ func (sg *scatterGather) process(batch protocol.Batch) (protocol.Batch, bool) {
 	// 4. Mark & checkpoint
 	if batch.BatchID != "" {
 		sg.dedup.Mark(batch.BatchID)
-		sg.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if sg.sm.ShouldCheckpoint() {
@@ -164,7 +164,7 @@ func (sg *scatterGather) recover() {
 			continue
 		}
 		sg.applyDelta(delta)
-		sg.sm.MarkApplied(entry.BatchID)
+
 		sg.dedup.Mark(entry.BatchID)
 	}
 	log.Printf("[scatter_gather] recovery done: %d WAL entries replayed", len(entries))
