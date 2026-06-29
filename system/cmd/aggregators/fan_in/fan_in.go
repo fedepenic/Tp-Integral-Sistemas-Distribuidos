@@ -81,7 +81,7 @@ func (f *fanIn) process(batch protocol.Batch) (protocol.Batch, bool) {
 	// 4. Mark & checkpoint
 	if batch.BatchID != "" {
 		f.deduper.Mark(batch.BatchID)
-		f.sm.MarkApplied(batch.BatchID)
+		
 	}
 
 	if f.sm.ShouldCheckpoint() {
@@ -117,7 +117,7 @@ func (f *fanIn) processSrcRef(batch protocol.Batch) (protocol.Batch, bool) {
 
 	if batch.BatchID != "" {
 		f.deduper.Mark(batch.BatchID)
-		f.sm.MarkApplied(batch.BatchID)
+		
 	}
 
 	if f.sm.ShouldCheckpoint() {
@@ -224,7 +224,6 @@ func (f *fanIn) recover() {
 			continue
 		}
 		f.applyDelta(delta)
-		f.sm.MarkApplied(entry.BatchID)
 		f.deduper.Mark(entry.BatchID)
 	}
 	log.Printf("[fan_in] recovery done: %d WAL entries replayed", len(entries))

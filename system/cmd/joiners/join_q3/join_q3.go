@@ -156,7 +156,7 @@ func (j *joinQ3) process(batch protocol.Batch) (protocol.Batch, bool) {
 	j.states[batch.ClientID] = state
 	if batch.BatchID != "" {
 		j.deduper.Mark(batch.BatchID)
-		j.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if j.sm.ShouldCheckpoint() {
@@ -226,7 +226,7 @@ func (j *joinQ3) recover() {
 			continue
 		}
 		j.applyDelta(delta)
-		j.sm.MarkApplied(entry.BatchID)
+
 		j.deduper.Mark(entry.BatchID)
 
 		// Re-emit the results this batch produced. During the live path the

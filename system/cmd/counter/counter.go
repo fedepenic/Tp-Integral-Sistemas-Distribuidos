@@ -42,7 +42,7 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 			var d counterDelta
 			if json.Unmarshal(entry.Delta, &d) == nil {
 				txnCounts[d.ClientID] += d.Count
-				sm.MarkApplied(entry.BatchID)
+
 				deduper.Mark(entry.BatchID)
 			}
 		}
@@ -78,7 +78,7 @@ func newProcess(outputMW middleware.Middleware) node.ProcessFunc {
 
 			if batch.BatchID != "" {
 				deduper.Mark(batch.BatchID)
-				sm.MarkApplied(batch.BatchID)
+
 			}
 
 			batchCount++

@@ -92,7 +92,7 @@ func (f *fanSrcFilter) process(batch protocol.Batch) (protocol.Batch, bool) {
 	// 4. Mark & checkpoint
 	if batch.BatchID != "" {
 		f.dedup.Mark(batch.BatchID)
-		f.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if f.sm.ShouldCheckpoint() {
@@ -193,7 +193,7 @@ func (f *fanSrcFilter) recover() {
 			continue
 		}
 		f.applyDelta(delta)
-		f.sm.MarkApplied(entry.BatchID)
+
 		f.dedup.Mark(entry.BatchID)
 	}
 	log.Printf("[fan_src_filter] recovery done: %d WAL entries replayed", len(entries))

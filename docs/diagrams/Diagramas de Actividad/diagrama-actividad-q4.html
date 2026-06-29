@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrama de Actividad — Query 4 (Scatter-Gather)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; }
+    header { background: #3b6fd4; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+    header h1 { font-size: 1.1rem; font-weight: 600; flex: 1; }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .controls button { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; }
+    .controls button:hover { background: rgba(255,255,255,0.35); }
+    #zoom-label { color: white; font-size: 0.85rem; min-width: 46px; text-align: center; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 24px; background: white; border-bottom: 1px solid #ddd; align-items: center; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: #444; }
+    .legend-circle { width: 16px; height: 16px; border-radius: 50%; background: #000; flex-shrink: 0; }
+    .legend-final { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #000; background: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .legend-final::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #000; }
+    .legend-flow { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #000; background: #fff; position: relative; flex-shrink: 0; }
+    .legend-flow::before, .legend-flow::after { content: ''; position: absolute; top: 50%; left: 50%; width: 10px; height: 2px; background: #000; }
+    .legend-flow::before { transform: translate(-50%, -50%) rotate( 45deg); }
+    .legend-flow::after  { transform: translate(-50%, -50%) rotate(-45deg); }
+    .legend-action { width: 26px; height: 14px; background: #fff; border: 1px solid #333; border-radius: 2px; flex-shrink: 0; }
+    .legend-decision { width: 16px; height: 16px; background: #fff; border: 1px solid #333; transform: rotate(45deg); flex-shrink: 0; }
+    .legend-queue { width: 32px; height: 14px; background: #d4b896; border: 1.5px solid #997a50; border-radius: 8px; flex-shrink: 0; }
+    .legend-sep { width: 1px; height: 24px; background: #ddd; }
+    #canvas-wrapper { overflow: hidden; width: 100%; height: calc(100vh - 116px); cursor: grab; position: relative; }
+    #canvas-wrapper:active { cursor: grabbing; }
+    #diagram-container { display: inline-block; padding: 32px; transform-origin: top left; user-select: none; }
+    #diagram-container svg { display: block; max-width: none !important; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Diagrama de Actividad — Query 4 (Scatter-Gather)</h1>
+  <div class="controls">
+    <button id="btn-fit">Ajustar</button>
+    <button id="btn-minus">−</button>
+    <span id="zoom-label">100%</span>
+    <button id="btn-plus">+</button>
+    <button id="btn-reset">Reset</button>
+  </div>
+</header>
+<div class="legend">
+  <div class="legend-item"><div class="legend-circle"></div> Inicio</div>
+  <div class="legend-item"><div class="legend-final"></div> Fin actividad</div>
+  <div class="legend-item"><div class="legend-flow"></div> Fin flujo parcial</div>
+  <div class="legend-item"><div class="legend-action"></div> Actividad</div>
+  <div class="legend-item"><div class="legend-decision"></div> Decisión</div>
+  <div class="legend-sep"></div>
+  <div class="legend-item"><div class="legend-queue"></div> Cola / Exchange</div>
+</div>
+<div id="canvas-wrapper">
+  <div id="diagram-container">
+    <div class="mermaid">
+---
+config:
+  layout: elk
+  elk:
+    mergeEdges: false
+    nodePlacementStrategy: NETWORK_SIMPLEX
+  flowchart:
+    curve: stepAfter
+---
+flowchart LR
+    classDef startN        fill:#000,stroke:#000,color:#fff
+    classDef activityFinal fill:#fff,stroke:#000,stroke-width:2px,color:#fff
+    classDef flowFinal     fill:#fff,stroke:#000,stroke-width:2px,color:#fff
+    classDef action        fill:#fff,stroke:#333,color:#333
+    classDef decision      fill:#fff,stroke:#333,color:#333
+    classDef queue         fill:#d4b896,stroke:#997a50,color:#333
+
+    subgraph FAN_SRC["FanSrcFilter (particionado, stateful con WAL)"]
+      direction TB
+      fs_start((●)):::startN
+      fs_listen["Listen to<br/>usd_period1_for_q4<br/>key: q4sf_{i-1}"]:::action
+      fs_recv["Receive"]:::action
+      fs_eof{"Is EOF?"}:::decision
+      fs_acc["Acumular por src_account:<br/>src → {dest1, dest2, ...}<br/>(distinct destinations)"]:::action
+      fs_flush["Flush: para cada src<br/>con ≥5 destinos distintos:<br/>emitir refs FO + FI<br/>a exchanges respectivos"]:::action
+      fs_fwd["Forward EOF a<br/>ambos exchanges"]:::action
+      fs_ack["Send ACK"]:::action
+      fs_end((( ))):::activityFinal
+    end
+
+    fs_start --> fs_listen --> fs_recv --> fs_eof
+    fs_eof -- "Yes" --> fs_flush --> fs_fwd --> fs_ack --> fs_end
+    fs_eof -- "No" --> fs_acc --> fs_ack --> fs_listen
+
+    usdp1_q4(["usd_period1_for_q4 (direct)"]):::queue
+    fo_exch(["usd_period1_for_q4_fo (direct)"]):::queue
+    fi_exch(["usd_period1_for_q4_fi (direct)"]):::queue
+
+    subgraph FAN_OUT["FanOut (particionado, stateful con WAL)"]
+      direction TB
+      fo_start((●)):::startN
+      fo_listen["Listen to<br/>usd_period1_for_q4_fo<br/>key: fo_{i-1}"]:::action
+      fo_recv["Receive"]:::action
+      fo_eof{"Is EOF?"}:::decision
+      fo_acc["Acumular por src_account:<br/>src → [middle1, middle2, ...]"]:::action
+      fo_flush["Flush: emit (src, middle)<br/>a scatter_gather_fo"]:::action
+      fo_fwd["Forward EOF"]:::action
+      fo_ack["Send ACK"]:::action
+      fo_end((( ))):::activityFinal
+    end
+
+    fo_start --> fo_listen --> fo_recv --> fo_eof
+    fo_eof -- "Yes" --> fo_flush --> fo_fwd --> fo_ack --> fo_end
+    fo_eof -- "No" --> fo_acc --> fo_ack --> fo_listen
+
+    subgraph FAN_IN["FanIn (particionado, stateful con WAL)"]
+      direction TB
+      fi_start((●)):::startN
+      fi_listen["Listen to<br/>usd_period1_for_q4_fi<br/>key: fi_{i-1}"]:::action
+      fi_recv["Receive"]:::action
+      fi_eof{"Is EOF?"}:::decision
+      fi_acc["Acumular por dst_account:<br/>dst → [middle1, middle2, ...]"]:::action
+      fi_flush["Flush: emit (middle, dst)<br/>a scatter_gather_fi"]:::action
+      fi_fwd["Forward EOF"]:::action
+      fi_ack["Send ACK"]:::action
+      fi_end((( ))):::activityFinal
+    end
+
+    fi_start --> fi_listen --> fi_recv --> fi_eof
+    fi_eof -- "Yes" --> fi_flush --> fi_fwd --> fi_ack --> fi_end
+    fi_eof -- "No" --> fi_acc --> fi_ack --> fi_listen
+
+    sg_fo(["scatter_gather_fo (direct)"]):::queue
+    sg_fi(["scatter_gather_fi (direct)"]):::queue
+
+    subgraph JOINER_SG["JoinerSG (particionado por middle, stateful con WAL)"]
+      direction TB
+      js_start((●)):::startN
+      js_listen_fo["Listen to scatter_gather_fo<br/>key: joinersg_{i-1}"]:::action
+      js_listen_fi["Listen to scatter_gather_fi<br/>key: joinersg_{i-1}"]:::action
+      js_recv_fo["Receive FO"]:::action
+      js_recv_fi["Receive FI"]:::action
+      js_eof_fo{"EOF FO?"}:::decision
+      js_eof_fi{"EOF FI?"}:::decision
+      js_fo_acc["Buffer FO refs<br/>por middle"]:::action
+      js_fi_acc["Buffer FI refs<br/>por middle"]:::action
+      js_join["Join por (MiddleBank, MiddleAcc)<br/>Producir triplas:<br/>(src, middle, dst)"]:::action
+      js_pub["Publish triplas a<br/>scatter_gather_data"]:::action
+      js_fwd["Forward EOF a<br/>scatter_gather_data"]:::action
+      js_ack["Send ACK"]:::action
+      js_end((( ))):::activityFinal
+      js_fo_flow((( ))):::flowFinal
+      js_fi_flow((( ))):::flowFinal
+      js_mark_fo["mark fo_eof = true"]:::action
+      js_mark_fi["mark fi_eof = true"]:::action
+      js_check_fi{"¿fi_eof<br/>also true?"}:::decision
+      js_check_fo{"¿fo_eof<br/>also true?"}:::decision
+    end
+
+    js_start --> js_listen_fo
+    js_start --> js_listen_fi
+    js_listen_fo --> js_recv_fo --> js_eof_fo
+    js_listen_fi --> js_recv_fi --> js_eof_fi
+    js_eof_fo -- "Yes" --> js_mark_fo --> js_check_fi
+    js_check_fi -- "Yes" --> js_join --> js_pub --> js_fwd --> js_ack --> js_end
+    js_check_fi -- "No" --> js_fo_flow
+    js_eof_fo -- "No (FO data)" --> js_fo_acc --> js_ack --> js_listen_fo
+    js_eof_fi -- "Yes" --> js_mark_fi --> js_check_fo
+    js_check_fo -- "No" --> js_fi_flow
+    js_eof_fi -- "No (FI data)" --> js_fi_acc --> js_ack --> js_listen_fi
+
+    sg_data(["scatter_gather_data (direct)"]):::queue
+
+    subgraph SCATTER_GATHER["ScatterGather (particionado, stateful con WAL)"]
+      direction TB
+      sg_start((●)):::startN
+      sg_listen["Listen to<br/>scatter_gather_data<br/>key: sg_{i-1}"]:::action
+      sg_recv["Receive"]:::action
+      sg_eof{"Is EOF?"}:::decision
+      sg_acc["count[(src, dst)] += 1<br/>por cada tripla"]:::action
+      sg_flush["Flush: emit (src, dst)<br/>con count > 5<br/>excluir src == dst"]:::action
+      sg_fwd["Forward EOF a q5_data"]:::action
+      sg_ack["Send ACK"]:::action
+      sg_end((( ))):::activityFinal
+    end
+
+    sg_start --> sg_listen --> sg_recv --> sg_eof
+    sg_eof -- "Yes" --> sg_flush --> sg_fwd --> sg_ack --> sg_end
+    sg_eof -- "No" --> sg_acc --> sg_ack --> sg_listen
+
+    q4_q(["q5_data"]):::queue
+
+    subgraph SINK["SinkQ4 (single)"]
+      direction TB
+      s_start((●)):::startN
+      s_listen["Listen to q5_data"]:::action
+      s_recv["Receive"]:::action
+      s_eof{"Is EOF?"}:::decision
+      s_wrap["Wrap (client_id,<br/>query=Q4, payload)"]:::action
+      s_publish["Publish a reports"]:::action
+      s_notify["Marcar Q4 completo"]:::action
+      s_pub_eof["Publish EOF a reports"]:::action
+      s_ack["Send ACK"]:::action
+      s_end((( ))):::activityFinal
+    end
+
+    s_start --> s_listen --> s_recv --> s_eof
+    s_eof -- "No" --> s_wrap --> s_publish --> s_ack --> s_listen
+    s_eof -- "Yes" --> s_notify --> s_pub_eof --> s_ack --> s_end
+
+    usdp1_q4 -.-> fs_recv
+    fs_flush & fs_fwd -.-> fo_exch
+    fs_flush & fs_fwd -.-> fi_exch
+    fo_exch -.-> fo_recv
+    fi_exch -.-> fi_recv
+    fo_flush & fo_fwd -.-> sg_fo
+    fi_flush & fi_fwd -.-> sg_fi
+    sg_fo -.-> js_recv_fo
+    sg_fi -.-> js_recv_fi
+    js_pub & js_fwd -.-> sg_data
+    sg_data -.-> sg_recv
+    sg_flush & sg_fwd -.-> q4_q
+    q4_q -.-> s_recv
+
+    style FAN_SRC fill:#f0f4ff,stroke:#a0b4dd,stroke-dasharray:4
+    style FAN_OUT fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style FAN_IN fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style JOINER_SG fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style SCATTER_GATHER fill:#fafafa,stroke:#999,stroke-dasharray:0
+    style SINK fill:#fafafa,stroke:#999,stroke-dasharray:0
+    </div>
+  </div>
+</div>
+<script>
+  mermaid.initialize({
+    startOnLoad: true, theme: 'default', fontSize: 18,
+    layout: 'elk',
+    flowchart: { useMaxWidth: false, curve: 'stepAfter', nodeSpacing: 50, rankSpacing: 80, padding: 18 },
+    elk: { mergeEdges: false, nodePlacementStrategy: 'NETWORK_SIMPLEX' }
+  });
+  const wrapper = document.getElementById('canvas-wrapper');
+  const container = document.getElementById('diagram-container');
+  const zoomLabel = document.getElementById('zoom-label');
+  let scale = 1, panX = 0, panY = 0, isDragging = false, startX, startY;
+  function applyTransform() { container.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`; zoomLabel.textContent = Math.round(scale * 100) + '%'; }
+  function fitDiagram() {
+    const svg = container.querySelector('svg'); if (!svg) return;
+    const svgW = svg.getBoundingClientRect().width / scale;
+    const svgH = svg.getBoundingClientRect().height / scale;
+    scale = Math.min((wrapper.clientWidth - 64) / svgW, (wrapper.clientHeight - 64) / svgH, 1);
+    panX = (wrapper.clientWidth  - svgW * scale) / 2;
+    panY = (wrapper.clientHeight - svgH * scale) / 2;
+    applyTransform();
+  }
+  function makeCylinders() {
+    const FILL='#d4b896',FILL_DARK='#b89a7a',STROKE='#997a50',ns='http://www.w3.org/2000/svg';
+    document.querySelectorAll('.node.queue').forEach(node => {
+      const shape = node.querySelector('rect, polygon, path'); if (!shape) return;
+      let W=0,H=0,x=0,y=0;
+      if (shape.tagName==='rect') { W=parseFloat(shape.getAttribute('width')); H=parseFloat(shape.getAttribute('height')); x=parseFloat(shape.getAttribute('x')??-W/2); y=parseFloat(shape.getAttribute('y')??-H/2); }
+      else { const bb=shape.getBBox(); W=bb.width; H=bb.height; x=bb.x; y=bb.y; }
+      const PAD=44,W2=W+PAD*2,x2=x-PAD,capRx=Math.min(H*0.44,W2*0.18),capRy=H/2,cx1=x2+capRx,cx2=x2+W2-capRx,cy=y+capRy;
+      shape.remove();
+      const make=(t,a)=>{const e=document.createElementNS(ns,t);Object.entries(a).forEach(([k,v])=>e.setAttribute(k,String(v)));return e;};
+      const label=node.querySelector('.label, foreignObject, .nodeLabel');
+      const ins=el=>label?node.insertBefore(el,label):node.appendChild(el);
+      ins(make('ellipse',{cx:cx1,cy,rx:capRx,ry:capRy,fill:FILL_DARK,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('rect',{x:cx1,y,width:cx2-cx1,height:H,fill:FILL,stroke:'none'}));
+      ins(make('line',{x1:cx1,y1:y,x2:cx2,y2:y,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('line',{x1:cx1,y1:y+H,x2:cx2,y2:y+H,stroke:STROKE,'stroke-width':1.5}));
+      ins(make('ellipse',{cx:cx2,cy,rx:capRx,ry:capRy,fill:FILL,stroke:STROKE,'stroke-width':1.5}));
+    });
+  }
+  document.getElementById('btn-plus').addEventListener('click',()=>{scale=Math.min(scale+0.15,4);applyTransform();});
+  document.getElementById('btn-minus').addEventListener('click',()=>{scale=Math.max(scale-0.15,0.1);applyTransform();});
+  document.getElementById('btn-reset').addEventListener('click',()=>{scale=1;panX=0;panY=0;applyTransform();});
+  document.getElementById('btn-fit').addEventListener('click',fitDiagram);
+  wrapper.addEventListener('wheel',e=>{e.preventDefault();scale=Math.min(Math.max(scale+(e.deltaY>0?-0.1:0.1),0.1),4);applyTransform();},{passive:false});
+  wrapper.addEventListener('mousedown',e=>{isDragging=true;startX=e.clientX-panX;startY=e.clientY-panY;});
+  window.addEventListener('mousemove',e=>{if(!isDragging)return;panX=e.clientX-startX;panY=e.clientY-startY;applyTransform();});
+  window.addEventListener('mouseup',()=>{isDragging=false;});
+  document.addEventListener('DOMContentLoaded',()=>{setTimeout(()=>{makeCylinders();fitDiagram();},600);});
+</script>
+</body>
+</html>

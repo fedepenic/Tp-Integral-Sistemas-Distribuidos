@@ -81,7 +81,7 @@ func (m *avgPerPaymentFormat) process(batch protocol.Batch) (protocol.Batch, boo
 	// 4. Mark dedup and checkpoint
 	if batch.BatchID != "" {
 		m.dedup.Mark(batch.BatchID)
-		m.sm.MarkApplied(batch.BatchID)
+
 	}
 
 	if m.sm.ShouldCheckpoint() {
@@ -160,7 +160,7 @@ func (m *avgPerPaymentFormat) recover() {
 			continue
 		}
 		m.applyDelta(delta)
-		m.sm.MarkApplied(entry.BatchID)
+
 		m.dedup.Mark(entry.BatchID)
 	}
 	log.Printf("[avg_per_payment_format] recovery done: %d WAL entries replayed", len(entries))
