@@ -1,5 +1,5 @@
 # Tp-Integral-Sistemas-Distribuidos
-Repositorio correspondiente al trabajo práctico de la materia 75.74 Sistemas Distribuidos I
+Repository for the practical assignment of course 75.74 Distributed Systems I
 
 ## Diagrams
 
@@ -14,7 +14,7 @@ For a better understanding of the architecture and data flow, refer to the diagr
 | Sequence diagrams (per query) | `docs/diagrams/Diagramas de Secuencia/` |
 | Activity diagrams (per query) | `docs/diagrams/Diagramas de Actividad/` |
 
-For a deeper understanding of the fault tolerance design and decisions, refer to the report at `assignments/TP Tolerancia a Fallas - Money Laundering Analysis.pdf`.
+For a deeper understanding of the fault tolerance design and decisions, refer to the report at `Informe_Tolerancia_A_Fallos.pdf`.
 
 ## Make commands
 
